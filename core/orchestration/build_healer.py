@@ -50,7 +50,7 @@ def classify_build_error(output: str) -> str:
 def is_safe_healing_command(cmd: str) -> bool:
     """Verifica si un comando del auto-healing es seguro (control de blast radius)."""
     cmd_lower = cmd.lower()
-    dangerous = ["rm ", "rm -", "uninstall", "purge", "delete", "fdisk", "mkfs", "dd ", "shred"]
+    dangerous = ["rm ", "rm -", "uninstall", "purge", "delete", "fdisk", "mkfs", "dd ", "shred", "sudo", "apt", "apt-get", "dnf", "pacman", "brew", "yum", "apk"]
     for d in dangerous:
         if d in cmd_lower:
             allowed_rm = [
@@ -144,6 +144,7 @@ def auto_heal_build_error(orchestrator, cmd: str, returncode: int, build_output:
         system_prompt = (
             "Eres un Agente Especialista en Auto-Recuperación de Sistemas (Auto-Healing Agent).\n"
             "Tu objetivo es diagnosticar y reparar problemas del entorno (ej. dependencias no instaladas, permisos faltantes, configuraciones erróneas, Dockerfiles rotos, etc.) para que el comando de compilación/verificación tenga éxito.\n\n"
+            "REGLA CRÍTICA DE ENTORNO: Limítate EXCLUSIVAMENTE a dependencias de desarrollo locales al proyecto (ej. pip install, npm install). TIENES ESTRICTAMENTE PROHIBIDO sugerir o ejecutar instalaciones a nivel de sistema operativo (apt, dnf, pacman, brew, sudo). Si el fallo es de infraestructura del host, aborta y reporta el error sin intentar curarlo.\n\n"
             "Instrucciones:\n"
             "1. Analiza el comando que falló y la salida exacta del error.\n"
             "2. Propón la solución:\n"
