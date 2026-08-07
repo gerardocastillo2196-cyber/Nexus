@@ -185,7 +185,7 @@ class TaskRunnerPhase:
                     logger.error("Error al reconciliar archivos de contexto Docker: %s", e)
 
     def _get_user_input_nonblocking(self, prompt: str) -> str:
-        """Obtiene respuesta del usuario usando prompt_toolkit con un timeout de 60s."""
+        """Obtiene respuesta del usuario usando prompt_toolkit esperando indefinidamente."""
         import asyncio
         from prompt_toolkit import PromptSession
         from prompt_toolkit.patch_stdout import patch_stdout
@@ -197,10 +197,7 @@ class TaskRunnerPhase:
                 return await session.prompt_async(prompt)
 
         try:
-            return asyncio.run(asyncio.wait_for(get_input(), timeout=60))
-        except TimeoutError:
-            scr_console.print("\n✗ Tiempo de espera agotado (60s). Asumiendo deny/skip por defecto.")
-            return "deny/skip"
+            return asyncio.run(get_input())
         except (KeyboardInterrupt, EOFError):
             scr_console.print("\n✗ Entrada interrumpida.")
             return "deny/skip"
