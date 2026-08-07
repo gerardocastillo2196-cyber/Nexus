@@ -31,6 +31,7 @@ Formato de respuesta:
 Instrucciones detalladas paso a paso para corregir el error en el próximo intento.
 
 3) ASK_USER: Si necesitas aclarar requisitos críticos, decisiones de diseño o permisos especiales del usuario.
+IMPORTANTE: NUNCA uses [ASK_USER] para pedir ayuda sobre errores de sintaxis, compilación, librerías o dependencias. El usuario NO puede ver el código temporal generado ni depurarlo por ti. Si el error no es claro (ej. SyntaxError genérico), asume el control usando [FEEDBACK] para ordenarle al desarrollador que reescriba el código desde cero.
 Formato de respuesta:
 [ASK_USER]
 Escribe la pregunta específica y directa para el usuario.
