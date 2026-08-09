@@ -124,7 +124,7 @@ def _get_sync_client() -> httpx.Client:
     with _http_client_lock:
         if _http_client is None:
             _http_client = httpx.Client(
-                timeout=httpx.Timeout(300.0, connect=30.0),
+                timeout=httpx.Timeout(900.0, connect=30.0),
                 limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
                 follow_redirects=True,
             )
@@ -557,7 +557,7 @@ def _call_llm_silent(
     if provider_name == "ollama":
         actual_timeout = timeout if isinstance(timeout, httpx.Timeout) else (
             httpx.Timeout(timeout, connect=10.0) if timeout is not None
-            else httpx.Timeout(180.0, connect=10.0)
+            else httpx.Timeout(900.0, connect=30.0)
         )
     else:
         actual_timeout = timeout
@@ -723,7 +723,7 @@ async def get_ai_response_async(
     agent_name: str | None = None,
     provider: str | None = None,
     model: str | None = None,
-    timeout: float | None = 60.0,
+    timeout: float | None = 900.0,
     json_mode: bool = False,
     temperature: float | None = None,
 ) -> str | None:
@@ -744,7 +744,7 @@ async def get_ai_response_async(
         payload["stream"] = False
         
     try:
-        async with httpx.AsyncClient(timeout=timeout or 60.0) as client:
+        async with httpx.AsyncClient(timeout=timeout or 900.0) as client:
             resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code == 200:
                 data = resp.json()

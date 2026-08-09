@@ -420,6 +420,8 @@ class ProjectOrchestrator:
             )
             tokens_result = self._call_agent(tokens_prompt, f"ARCHITECTURE.md:\n{arch[:6000]}")
             self._write_project_file("DESIGN_TOKENS.md", tokens_result)
+        else:
+            self._write_project_file("DESIGN_TOKENS.md", "# 🎨 Design Tokens\n\nNo se detectó un archivo ARCHITECTURE.md inicial. Los agentes definirán los convenciones sobre la marcha.")
 
         # 3. DATA_SCHEMA.md — Escanea modelos de datos existentes
         schema_parts = []
@@ -436,6 +438,14 @@ class ProjectOrchestrator:
                 "# 📊 Esquema de Datos (Auto-generado)\n\n" + "\n".join(schema_parts) +
                 "\n*Auto-generado por Jellyfish OS.*\n"
             ))
+        else:
+            self._write_project_file("DATA_SCHEMA.md", "# 📊 Esquema de Datos\n\nNo se detectaron modelos de datos iniciales. Los agentes actualizarán este archivo cuando creen la base de datos.")
+
+        # 3.5. COMPONENT_INDEX.md & DEPENDENCY_MANIFEST.md (Fallbacks)
+        if not os.path.isfile(os.path.join(self.project_path, "COMPONENT_INDEX.md")):
+            self._write_project_file("COMPONENT_INDEX.md", "# 🧩 Índice de Componentes\n\n(Archivo autogenerado vacío para uso de los agentes)")
+        if not os.path.isfile(os.path.join(self.project_path, "DEPENDENCY_MANIFEST.md")):
+            self._write_project_file("DEPENDENCY_MANIFEST.md", "# 📦 Manifiesto de Dependencias\n\n(Archivo autogenerado vacío para uso de los agentes)")
 
         # 4. SECURITY.md — Guardrails de seguridad
         security_path = os.path.join(self.project_path, "SECURITY.md")

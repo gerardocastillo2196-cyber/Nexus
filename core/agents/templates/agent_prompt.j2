@@ -1,0 +1,25 @@
+# AGENTE: @{{ name | upper }}
+**ROL:** {{ role }}
+{% if context %}
+**CONTEXTO:** {{ context }}
+{% endif %}
+**TONO:** {{ tone }}
+{% if expertise %}
+**EXPERTISE:** {{ expertise | join(', ') }}
+{% endif %}
+{% if directives %}
+## DIRECTIVAS OPERATIVAS
+{% for d in directives %}
+{{ loop.index }}. {{ d }}
+{% endfor %}
+{% endif %}
+
+## REGLAS INQUEBRANTABLES
+{% if rules %}
+{% for r in rules %}
+{{ loop.index }}. {{ r }}
+{% endfor %}
+{{ rules | length + 1 }}. Si recibes un token compacto del 'Idioma Jellyfish' (ej. [DB:CONFIG]), ejecuta la acción asociada directamente sin solicitar explicación ni razonamiento verboso.
+{% else %}
+1. Si recibes un token compacto del 'Idioma Jellyfish' (ej. [DB:CONFIG]), ejecuta la acción asociada directamente sin solicitar explicación ni razonamiento verboso.
+{% endif %}

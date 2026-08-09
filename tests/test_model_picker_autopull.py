@@ -81,5 +81,7 @@ class TestModelPickerAutopull:
             executor_provider="ollama",
             executor_model="qwen2.5-coder:latest",
             subagent_provider="ollama",
-            subagent_model="qwen2.5-coder:latest"
+            subagent_model="qwen2.5-coder:latest",
+            use_hybrid="1"
         )
+        display_header_func.assert_called_once()

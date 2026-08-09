@@ -43,6 +43,9 @@ class TUIEngine:
         import builtins
         if hasattr(self, "_original_input"):
             builtins.input = self._original_input
+        if os.name != "nt" and sys.stdout.isatty():
+            sys.stdout.write("\x1b[r")
+            sys.stdout.flush()
 
     def _custom_input(self, prompt=""):
         return self.prompt_user(prompt)
@@ -62,8 +65,16 @@ class TUIEngine:
         return interactive_picker(title, options, add_back=False)
 
     def clear_scroll_region(self):
-        """Limpia la terminal estándar."""
+        """Limpia la terminal estándar y prepara cabecera fija TUI."""
+        if os.name != "nt" and sys.stdout.isatty():
+            sys.stdout.write("\x1b[r\x1b[2J\x1b[H")
+            sys.stdout.flush()
         os.system("cls" if os.name == "nt" else "clear")
+        try:
+            import core.ui as _ui_mod
+            _ui_mod._header_home_needed = True
+        except Exception:
+            pass
 
     def move_cursor_to_scroll_region(self):
         """No-op en CLI."""

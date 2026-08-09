@@ -98,6 +98,37 @@ class BaseAgent(BaseModel):
 
     def get_system_prompt(self) -> str:
         """Construye dinámicamente el prompt de sistema del agente.
+        
+        Intenta usar Jinja2 para cargar una plantilla profesional. Si Jinja2 no
+        está instalado o la plantilla no existe, utiliza un fallback dinámico.
+        """
+        try:
+            import os
+            from jinja2 import Environment, FileSystemLoader
+            
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            templates_dir = os.path.join(current_dir, "templates")
+            
+            if os.path.exists(templates_dir):
+                env = Environment(loader=FileSystemLoader(templates_dir))
+                template = env.get_template("agent_prompt.j2")
+                
+                return template.render(
+                    name=self.name,
+                    role=self.role,
+                    context=self.context,
+                    tone=self.tone,
+                    expertise=self.expertise,
+                    directives=self.directives,
+                    rules=self.rules
+                )
+        except ImportError:
+            pass # Jinja2 no instalado, usar fallback legacy
+            
+        return self._get_system_prompt_legacy()
+
+    def _get_system_prompt_legacy(self) -> str:
+        """Construye dinámicamente el prompt de sistema del agente (Fallback).
 
         El formato replica la estructura Markdown que el orquestador
         ya espera (# AGENTE, **ROL:**, etc.) para mantener compatibilidad.

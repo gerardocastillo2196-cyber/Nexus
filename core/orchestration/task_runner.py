@@ -567,6 +567,9 @@ class TaskRunnerPhase:
                     f"Si el entregable es rechazado por control de calidad (DoD), recibirás retroalimentación específica. "
                     f"Deberás corregir los problemas indicados inmediatamente sin dejar placeholders, TODOs vacíos o secciones incompletas.\n\n"
                     f"[REGLA CRÍTICA DE SEPARACIÓN DE CÓDIGO Y DOCUMENTACIÓN]\n"
+                    f"[PROHIBICIÓN DE TEXTO CONVERSACIONAL]\n"
+                    f"Tienes ESTRICTAMENTE PROHIBIDO incluir introducciones, despedidas, explicaciones o cualquier texto conversacional (ej. 'Aquí tienes el código:'). "
+                    f"Tu respuesta DEBE contener ÚNICAMENTE las etiquetas requeridas (XML o Markdown) y el código. Nada más.\n\n"
                     f"Si la tarea requiere crear o modificar archivos de código real, scripts, andamiajes o configuraciones en el disco del proyecto, "
                     f"debes especificar cada uno de ellos dentro de tu entregable utilizando etiquetas con la ruta del archivo. "
                     f"Puedes usar cualquiera de los siguientes dos formatos:\n\n"
@@ -587,11 +590,6 @@ class TaskRunnerPhase:
                     f"Eres un desarrollador de software escribiendo código en un entorno local, NO eres un administrador de sistemas (sysadmin). Tienes ESTRICTAMENTE PROHIBIDO intentar reconfigurar la máquina host, instalar paquetes del sistema operativo (apt, dnf, pacman, brew), modificar el directorio /etc, o utilizar comandos con 'sudo'. Tu única responsabilidad es escribir, corregir y guardar el código fuente. Si una prueba falla por problemas de infraestructura, red, o permisos del host, NO intentes arreglar el entorno; aborta la ejecución y solicita ayuda utilizando [ASK_USER].\n\n"
                     f"[REGLAS DE INFRAESTRUCTURA]\n"
                     f"REGLA ESTRUCTURAL ESTRICTA: NUNCA referencies un directorio, archivo o contexto de compilación (ej. en docker-compose) sin haber verificado primero que existe usando comandos de consola. Si configuras un servicio que requiere compilación (build), ESTÁS OBLIGADO a crear el `Dockerfile` correspondiente en la ruta exacta que especificaste y a generar el `package.json` o `requirements.txt` base si no existen. NO puedes dar una tarea de DevOps por terminada si faltan los archivos de construcción.\n\n"
-                    f"[NEGATIVE PROMPT GLOBAL: DIRECTIVA ANTI-ARCHIVOS HUÉRFANOS]\n"
-                    f"🚫 PROHIBIDO ESTRICTAMENTE CREAR ARCHIVOS HUÉRFANOS.\n"
-                    f"Está prohibido crear componentes, rutas, controladores, servicios, módulos o utilidades aislados que no estén conectados al sistema.\n"
-                    f"REGLA DE INTEGRACIÓN OBLIGATORIA: Cada vez que generes un nuevo archivo o componente (ej. una nueva vista React, un módulo Python, una ruta Express, un controlador, etc.), ESTÁS OBLIGADO a importar e integrar dicho componente en el archivo de entrada principal del proyecto (ej. App.tsx, index.js, server.js, main.py, routes/index.ts, urls.py) en el MISMO paso o entrega.\n"
-                    f"No se dará ninguna tarea por completada si el componente nuevo no está exportado, importado y montado activamente en la aplicación principal."
                 )
 
                 user_prompt = (
@@ -810,12 +808,21 @@ class TaskRunnerPhase:
                                     except Exception as post_err:
                                         logger.warning("post_execute de @%s falló: %s", agent_name, post_err)
 
-                                # Escribir a disco
-                                self.orchestrator._write_project_file(sub_file, sub_task_result)
+                                # Extraer archivos usando etiquetas exactas (XML o Markdown anotado)
                                 sub_created = self.orchestrator._extract_and_write_files(sub_task_result)
 
                                 if not sub_created:
-                                    sub_created = [sub_file]
+                                    # Fallback: Si el LLM omitió la etiqueta pero generó un bloque de código markdown, extraerlo
+                                    md_block = re.search(r'```[a-zA-Z0-9_+-]*\n(.*?)\n```', sub_task_result, re.DOTALL)
+                                    if md_block:
+                                        clean_content = md_block.group(1)
+                                        self.orchestrator._write_project_file(sub_file, clean_content)
+                                        sub_created = [sub_file]
+                                        sub_task_result = clean_content # Actualizar para que el task_result quede limpio
+                                    else:
+                                        # Si no hay bloque de código, escribir el resultado en crudo como último recurso
+                                        self.orchestrator._write_project_file(sub_file, sub_task_result)
+                                        sub_created = [sub_file]
 
                                 created_files.extend(sub_created)
                                 task_result += f"\n\n[FILE: {sub_file}]\n{sub_task_result}"
@@ -845,7 +852,7 @@ class TaskRunnerPhase:
                             # Validación de sintaxis estática y ejecución real por subproceso
                             syntax_ok = True
                             syntax_error_msg = ""
-                            from core.orchestration.code_analyzer import validate_syntax
+                            from core.orchestration.code_analyzer import validate_syntax, check_orphaned_files
                             for f_created in created_files:
                                 abs_f_path = os.path.join(self.orchestrator.project_path, f_created)
                                 if os.path.isfile(abs_f_path):
@@ -854,6 +861,15 @@ class TaskRunnerPhase:
                                         syntax_ok = False
                                         syntax_error_msg = s_err
                                         break
+
+                            # Validación estática de archivos huérfanos
+                            orphaned_ok = True
+                            orphaned_msg = ""
+                            if syntax_ok:
+                                orphans = check_orphaned_files(self.orchestrator.project_path, created_files)
+                                if orphans:
+                                    orphaned_ok = False
+                                    orphaned_msg = f"Archivos huérfanos detectados: {', '.join(orphans)}. DEBES integrarlos/importarlos en tu proyecto principal."
 
                             # Validación estricta en subproceso real (subprocess.run)
                             exec_subproc_ok, exec_subproc_reason = self._run_strict_subprocess_dod_validation(
@@ -868,6 +884,9 @@ class TaskRunnerPhase:
                                 elif not syntax_ok:
                                     dod_approved = False
                                     dod_reason = f"Error de sintaxis estática detectado por el analizador: {syntax_error_msg}"
+                                elif not orphaned_ok:
+                                    dod_approved = False
+                                    dod_reason = orphaned_msg
                                 elif not exec_subproc_ok:
                                     dod_approved = False
                                     dod_reason = exec_subproc_reason
@@ -893,6 +912,8 @@ class TaskRunnerPhase:
                                     if res_type == "AUTO_FIX":
                                         syntax_ok = True
                                         syntax_error_msg = ""
+                                        orphaned_ok = True
+                                        orphaned_msg = ""
                                         for f_created in created_files:
                                             abs_f_path = os.path.join(self.orchestrator.project_path, f_created)
                                             if os.path.isfile(abs_f_path):
@@ -901,10 +922,17 @@ class TaskRunnerPhase:
                                                     syntax_ok = False
                                                     syntax_error_msg = s_err
                                                     break
+                                                    
+                                        if syntax_ok:
+                                            orphans = check_orphaned_files(self.orchestrator.project_path, created_files)
+                                            if orphans:
+                                                orphaned_ok = False
+                                                orphaned_msg = f"Archivos huérfanos detectados tras Auto-Curación: {', '.join(orphans)}."
+                                                
                                         exec_subproc_ok, exec_subproc_reason = self._run_strict_subprocess_dod_validation(
                                             self.orchestrator.project_path, created_files, output_file
                                         )
-                                        if syntax_ok and exec_subproc_ok:
+                                        if syntax_ok and orphaned_ok and exec_subproc_ok:
                                             file_content = task_result if len(files_to_generate) > 1 else self.orchestrator._read_project_file(output_file)
                                             dod_approved, dod_reason, breaker_tripped = self._run_swarm_consensus_debate(
                                                 task_id_str, agent_name, task_desc, output_file, file_content, attempt, task, tasks
@@ -934,6 +962,9 @@ class TaskRunnerPhase:
                                 elif not syntax_ok:
                                     dod_approved = False
                                     dod_reason = f"Error de sintaxis estática detectado por el analizador: {syntax_error_msg}"
+                                elif not orphaned_ok:
+                                    dod_approved = False
+                                    dod_reason = orphaned_msg
                                 elif not exec_subproc_ok:
                                     dod_approved = False
                                     dod_reason = exec_subproc_reason

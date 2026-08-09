@@ -528,17 +528,32 @@ def _handle_model_picker(state, display_header_func, arg: str = None) -> None:
                 executor_provider=prov,
                 executor_model=target_model,
                 subagent_provider=prov,
-                subagent_model=target_model
+                subagent_model=target_model,
+                use_hybrid="1"
             )
+            if display_header_func:
+                display_header_func()
             console.print(f"[green]✓ Asignado '{target_model}' como modelo LOCAL / EJECUTOR.[/green]")
         elif "NUBE" in role_choice:
-            state.save_config(planner_provider=prov, planner_model=target_model)
+            state.save_config(planner_provider=prov, planner_model=target_model, use_hybrid="1")
+            if display_header_func:
+                display_header_func()
             console.print(f"[green]✓ Asignado '{target_model}' como modelo NUBE / PLANIFICADOR.[/green]")
         elif "AUDITORÍA" in role_choice or "QA" in role_choice:
-            state.save_config(qa_provider=prov, qa_model=target_model)
+            state.save_config(qa_provider=prov, qa_model=target_model, use_hybrid="1")
+            if display_header_func:
+                display_header_func()
             console.print(f"[green]✓ Asignado '{target_model}' como modelo de AUDITORÍA / QA.[/green]")
         elif "GLOBAL" in role_choice:
-            state.save_config(provider=prov, model=target_model)
+            state.save_config(
+                provider=prov, model=target_model,
+                executor_provider=prov, executor_model=target_model,
+                planner_provider=prov, planner_model=target_model,
+                qa_provider=prov, qa_model=target_model,
+                use_hybrid="0"
+            )
+            if display_header_func:
+                display_header_func()
             console.print(f"[green]✓ Asignado '{target_model}' como modelo GLOBAL.[/green]")
         return
 
@@ -589,7 +604,13 @@ def _handle_model_picker(state, display_header_func, arg: str = None) -> None:
 def _select_global_model(state, display_header_func):
     prov, mod, key, url = _interactive_select_provider_and_model(state, "MODELO GLOBAL")
     if prov and mod:
-        config = {"provider": prov, "model": mod}
+        config = {
+            "provider": prov, "model": mod,
+            "executor_provider": prov, "executor_model": mod,
+            "planner_provider": prov, "planner_model": mod,
+            "qa_provider": prov, "qa_model": mod,
+            "use_hybrid": "0"
+        }
         if key:
             config[f"{prov}_key"] = key
             state.api_keys[prov] = key
@@ -605,7 +626,7 @@ def _select_global_model(state, display_header_func):
 def _select_local_model(state, display_header_func):
     prov, mod, key, url = _interactive_select_provider_and_model(state, "MODELO LOCAL (EJECUTORES)", restrict_local=True)
     if prov and mod:
-        config = {"executor_provider": prov, "executor_model": mod}
+        config = {"executor_provider": prov, "executor_model": mod, "use_hybrid": "1"}
         if key:
             config[f"{prov}_key"] = key
             state.api_keys[prov] = key
@@ -621,7 +642,7 @@ def _select_local_model(state, display_header_func):
 def _select_cloud_model(state, display_header_func):
     prov, mod, key, url = _interactive_select_provider_and_model(state, "MODELO EN LA NUBE (PLANIFICADORES)", restrict_cloud=True)
     if prov and mod:
-        config = {"planner_provider": prov, "planner_model": mod}
+        config = {"planner_provider": prov, "planner_model": mod, "use_hybrid": "1"}
         if key:
             config[f"{prov}_key"] = key
             state.api_keys[prov] = key
@@ -637,7 +658,7 @@ def _select_cloud_model(state, display_header_func):
 def _select_qa_model(state, display_header_func):
     prov, mod, key, url = _interactive_select_provider_and_model(state, "MODELO DE AUDITORÍA / QA (DEBATE ENJAMBRE)")
     if prov and mod:
-        config = {"qa_provider": prov, "qa_model": mod}
+        config = {"qa_provider": prov, "qa_model": mod, "use_hybrid": "1"}
         if key:
             config[f"{prov}_key"] = key
             state.api_keys[prov] = key

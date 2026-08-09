@@ -569,6 +569,7 @@ def main():
         handle_exit_flow(state)
         sync_readme_on_exit(state)
         console.print("[bold purple]🪼 Jellyfish desconectado. Hasta pronto.[/bold purple]")
+        os._exit(0)
 
 
 if __name__ == "__main__":

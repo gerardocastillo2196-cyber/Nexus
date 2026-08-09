@@ -366,3 +366,52 @@ def validate_syntax(filepath: str) -> tuple[bool, str]:
         return False, analysis["error"]
     return True, "OK"
 
+
+def check_orphaned_files(project_path: str, created_files: list[str]) -> list[str]:
+    """Valida estáticamente si los archivos recién creados están importados/referenciados.
+    
+    Reemplaza la directiva anti-archivos huérfanos del prompt por código determinista.
+    Retorna una lista con las rutas de los archivos que parecen estar huérfanos.
+    """
+    orphaned = []
+    
+    code_extensions = ('.py', '.js', '.jsx', '.ts', '.tsx', '.dart', '.java', '.kt', '.go')
+    entry_points = {
+        'main.py', 'app.py', 'manage.py', 'setup.py', 'server.js', 'index.js',
+        'app.js', 'main.js', 'index.ts', 'app.ts', 'main.ts', 'app.tsx',
+        'index.tsx', 'main.dart', 'build.gradle', 'dockerfile', 'urls.py'
+    }
+    
+    all_project_files = []
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in ('.git', 'node_modules', 'venv', '.venv', '__pycache__', 'build', 'dist', '.dart_tool')]
+        for f in files:
+            all_project_files.append(os.path.join(root, f))
+            
+    for rel_path in created_files:
+        ext = os.path.splitext(rel_path)[1].lower()
+        basename = os.path.basename(rel_path).lower()
+        
+        if ext not in code_extensions or basename in entry_points or basename.startswith('.') or "config" in basename or "test" in basename:
+            continue
+            
+        name_no_ext = os.path.splitext(os.path.basename(rel_path))[0]
+        
+        is_referenced = False
+        for filepath in all_project_files:
+            if os.path.abspath(filepath) == os.path.abspath(os.path.join(project_path, rel_path)):
+                continue
+                
+            try:
+                with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                    if name_no_ext in f.read():
+                        is_referenced = True
+                        break
+            except Exception:
+                pass
+                
+        if not is_referenced:
+            orphaned.append(rel_path)
+            
+    return orphaned
+

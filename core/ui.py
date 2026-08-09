@@ -40,6 +40,7 @@ claude_style = Style.from_dict({
 
 # Consola global con ancho controlado
 _main_console = Console(force_terminal=True)
+_header_home_needed = True
 
 
 def display_header(active_agent="default", model_name="none", num_skills=0,
@@ -165,8 +166,36 @@ def display_header(active_agent="default", model_name="none", num_skills=0,
     if silent:
         return output
 
-    # Sprint 8.2 — Imprimir como texto normal (sin posicionamiento de cursor)
-    sys.stdout.write(output)
+    global _header_home_needed
+    if os.name == "nt" or not sys.stdout.isatty():
+        # Fallback básico para Windows o salida sin tty (pipes, tests)
+        sys.stdout.write(output)
+        sys.stdout.flush()
+        return
+
+    import shutil
+    lines = output.rstrip("\r\n").splitlines()
+    header_height = len(lines)
+    try:
+        term_height = shutil.get_terminal_size((80, 24)).lines
+    except Exception:
+        term_height = 24
+
+    if _header_home_needed:
+        # Asegurar región de scroll normal (pantalla completa) para NO romper el buffer de scrollback de la terminal
+        sys.stdout.write("\x1b[r\x1b[1;1H")
+        for i, line_str in enumerate(lines):
+            sys.stdout.write(f"\x1b[{i+1};1H{line_str}\x1b[K\r\n")
+        # Colocar el cursor justo debajo en la zona de trabajo activa
+        sys.stdout.write(f"\x1b[{header_height + 1};1H\x1b[K")
+        _header_home_needed = False
+    else:
+        # Actualización silenciosa del header in situ (sin imprimir en el flujo ni ensuciar el historial de chat)
+        sys.stdout.write("\x1b7\x1b[s\x1b[r")
+        for i, line_str in enumerate(lines):
+            sys.stdout.write(f"\x1b[{i+1};1H{line_str}\x1b[K")
+        sys.stdout.write("\x1b8\x1b[u")
+
     sys.stdout.flush()
 
 

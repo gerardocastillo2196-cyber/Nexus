@@ -176,21 +176,14 @@ Orquesta el ciclo de vida de ingeniería y sprint completo con 5 agentes cogniti
 | `/help` | `/h` | Visualizar este manual v6.9.15 |
 | `/exit` | — | Cerrar Jellyfish OS en orden y apagar servicios |
 
-"""r proveedor activo |
-| `/status` | `/info` | Ver el estado actual del sistema y la configuración activa |
-| `/purge` | — | Borrar todo contexto y RAG |
-| `/clear` | — | Limpiar historial de chat |
-| `/help` | `/h` | Este manual |
-| `/exit` | — | Cerrar Jellyfish |
-
 """
 
 def handle_system_command(command: str, arg: str, state, plugins, display_header_func) -> None:
     if command == "/goff":
         state.show_guides = False
         state.save_config(show_guides="0")
-        os.system("cls" if os.name == "nt" else "clear")
         from core.tui import tui_engine
+        tui_engine.clear_scroll_region()
         tui_engine.print_welcome_logo()
         display_header_func(force=True)
         console.print("🪼 Guías del proyecto DESACTIVADAS. Escribe /gon para volver a activarlas.")
@@ -198,8 +191,8 @@ def handle_system_command(command: str, arg: str, state, plugins, display_header
     elif command == "/gon":
         state.show_guides = True
         state.save_config(show_guides="1")
-        os.system("cls" if os.name == "nt" else "clear")
         from core.tui import tui_engine
+        tui_engine.clear_scroll_region()
         tui_engine.print_welcome_logo()
         display_header_func(force=True)
         from core.commands.project import show_project_guide_if_needed
@@ -207,8 +200,8 @@ def handle_system_command(command: str, arg: str, state, plugins, display_header
 
     elif command == "/clear":
         state.reset_history()
-        os.system("cls" if os.name == "nt" else "clear")
         from core.tui import tui_engine
+        tui_engine.clear_scroll_region()
         tui_engine.print_welcome_logo()
         display_header_func(force=True)
         from core.commands.project import show_project_guide_if_needed

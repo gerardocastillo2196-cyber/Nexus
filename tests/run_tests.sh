@@ -75,7 +75,8 @@ if should_run 1; then
     header 1 "Sintaxis y compilación de módulos"
     for mod in jellyfish.py core/state.py core/llm_engine.py core/rag_coder.py \
                core/orchestrator.py core/terminal.py core/plugin_manager.py \
-               core/crud.py core/ui.py tests/test_core.py; do
+               core/crud.py core/ui.py core/commands/system.py core/commands/project.py \
+               tests/test_core.py tests/test_swarm_architecture.py; do
         if [[ ! -f "$mod" ]]; then
             fail "$mod — no encontrado"
             continue

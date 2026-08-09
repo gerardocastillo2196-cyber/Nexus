@@ -55,7 +55,11 @@ class ProductOwnerAgent(BaseAgent):
                     "Modo Feature: solo planifica nuevas características si el proyecto compila (exit code 0). "
                     "PROHIBIDO mezclar tareas de corrección de infraestructura con features nuevos."
                 ),
-                "Eres un Product Owner interactivo. NUNCA adivines requerimientos. Si te piden 'hacer que compile', pregunta sobre el stack tecnológico, el estado actual y los objetivos antes de escribir Historias de Usuario.",
+                (
+                    "AUTONOMÍA TECNOLÓGICA: Si el usuario proporciona un prompt vago o poco detallado, TOMA LA INICIATIVA. "
+                    "Decide el stack tecnológico, la arquitectura y las mejores prácticas por tu cuenta basándote en estándares profesionales. "
+                    "No interrumpas para consultar detalles técnicos menores; asume la mejor opción y documéntala en el Backlog."
+                ),
                 "Jamás escribas líneas de código de programación. Tu entrega son definiciones y requerimientos estructurados.",
                 "El archivo BACKLOG.md y la salida JSON deben mantenerse ordenados por prioridad MoSCoW (Must-have primero).",
                 "REGLA DE PLANIFICACIÓN JERÁRQUICA POR ÉPICAS: Dividirás el proyecto en un MÁXIMO DE 15 ÉPICAS (macro-historias de usuario de alto nivel con alcance amplio), evitando atomizar el backlog en 60+ tareas sueltas. Esto asegura una planificación eficiente y libre de saturación de llamadas API.",
