@@ -51,6 +51,36 @@ class TestSecuritySudoSanitization(unittest.TestCase):
         self.assertIn("INCIDENTE DE SEGURIDAD", result)
         self.assertIn("destructivo", result)
 
+    def test_sandbox_blocking(self):
+        from core.agents import sandbox
+
+        # 1. Comandos con sudo/su/doas deben ser marcados como no seguros por is_command_safe
+        safe, pat = sandbox.is_command_safe("sudo apt-get update")
+        self.assertFalse(safe)
+        self.assertIn("sudo", pat.lower())
+
+        safe_su, _ = sandbox.is_command_safe("su - root")
+        self.assertFalse(safe_su)
+
+        safe_doas, _ = sandbox.is_command_safe("doas pacman -Syu")
+        self.assertFalse(safe_doas)
+
+        # 2. Rutas protegidas
+        safe_path, _ = sandbox.is_command_safe("echo 'test' > /root/test.txt")
+        self.assertFalse(safe_path)
+
+        # 3. run_subprocess con comandos no seguros debe fallar con código -1 y mensaje de seguridad
+        res = sandbox.run_subprocess(["sudo", "apt-get", "update"])
+        self.assertEqual(res.returncode, -1)
+        self.assertIn("🛑 INCIDENTE DE SEGURIDAD", res.stderr)
+
+        # 4. run_terminal_command con comandos no seguros
+        state = MagicMock()
+        state.denied_commands = set()
+        res_terminal = sandbox.run_terminal_command("sudo apt-get update", state)
+        self.assertIn("🛑 INCIDENTE DE SEGURIDAD", res_terminal)
+        self.assertIn("sudo apt-get update", state.denied_commands)
+
 
 if __name__ == "__main__":
     unittest.main()

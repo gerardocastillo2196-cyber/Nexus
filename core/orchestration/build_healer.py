@@ -11,7 +11,72 @@ from core.utils import _safe_read
 logger = logging.getLogger("jellyfish.orchestration.build_healer")
 console = Console()
 
-SENTINEL_HEALER_SYSTEM = """Eres @Sentinel, el agente experto de control de calidad, depuración y auto-curación de Jellyfish OS.
+def is_new_project(project_path: str) -> bool:
+    """Retorna True si el proyecto se esta creando desde cero."""
+    if not project_path or not os.path.isdir(project_path):
+        return True
+    
+    config_path = os.path.join(project_path, ".jellyfish_project_config.json")
+    if os.path.isfile(config_path):
+        try:
+            import json
+            with open(config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if "is_new_project" in data:
+                return data["is_new_project"]
+        except Exception:
+            pass
+
+    jellyfish_files = {
+        "backlog.md", "development_log.md", "sprint_board.md", "project_tree.md",
+        "scrum_methodology.md", "daily.md", "playbook.md", "architecture.md",
+        "business_context.md", "component_index.md", "data_schema.md",
+        "dependency_manifest.md", "design_tokens.md", "security.md",
+        "backlog.json", "sprint_board.json", "intent_map.json", "env_capabilities.json",
+        ".jellyfish_project_config.json", ".jellyfish_history.json", ".jellyfish.lock",
+        ".jellyfish_circuit_breaker", ".jellyfish_last_exit_code",
+        "jellyfish.log", "jellyfish_debug.log"
+    }
+    try:
+        with os.scandir(project_path) as entries:
+            for entry in entries:
+                name_lower = entry.name.lower()
+                if name_lower.startswith(".") and name_lower not in jellyfish_files:
+                    if name_lower in [".git", ".gitignore", ".env", ".pytest_cache", ".venv", "venv"]:
+                        continue
+                if name_lower not in jellyfish_files:
+                    return False
+    except Exception:
+        pass
+    return True
+
+def get_sentinel_healer_system(sentinel_mode: str) -> str:
+    """Retorna el prompt de sistema compacto para @Sentinel."""
+    ask_user_option = ""
+    if sentinel_mode == "interactive":
+        ask_user_option = "\n3) ASK_USER: Si necesitas aclarar requisitos críticos o permisos especiales del usuario.\nFormato de respuesta:\n[ASK_USER]\nEscribe la pregunta específica para el usuario.\n"
+        
+    return f"""Eres @Sentinel, el agente experto de control de calidad, depuración y auto-curación de Jellyfish OS.
+Tu misión es recibir una tarea técnica, los archivos de código que se generaron, y el log detallado del error de compilación, sintaxis o DoD.
+Debes analizar el log de error para diagnosticar exactamente qué causó el fallo.
+
+Debes elegir la más adecuada de las opciones y responder en el formato exacto:
+
+1) AUTO_FIX: Si puedes corregir el código del archivo que falló directamente.
+Formato de respuesta:
+[AUTO_FIX]
+Explicación breve de la corrección.
+<write_file path="ruta/del/archivo.ext">
+contenido del archivo corregido...
+</write_file>
+
+2) FEEDBACK: Si la corrección requiere lógica compleja o reestructuraciones que debe hacer el desarrollador original.
+Formato de respuesta:
+[FEEDBACK]
+Instrucciones detalladas paso a paso para corregir el error.
+{ask_user_option}"""
+
+_SENTINEL_HEALER_SYSTEM_ORIG = """Eres @Sentinel, el agente experto de control de calidad, depuración y auto-curación de Jellyfish OS.
 Tu misión es recibir una tarea técnica, los archivos de código que se generaron, y el log detallado del error de compilación, sintaxis o DoD.
 Debes analizar el log de error para diagnosticar exactamente qué causó el fallo.
 
@@ -259,10 +324,14 @@ def run_sentinel_auto_healing(
     )
     
     try:
+        is_new = is_new_project(orchestrator.project_path)
+        sentinel_mode = "autonomous" if is_new else "interactive"
+        system_prompt = get_sentinel_healer_system(sentinel_mode)
+        
         sentinel_res = _call_llm_silent(
             orchestrator.state,
             [
-                {"role": "system", "content": SENTINEL_HEALER_SYSTEM},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
             agent_name="sentinel"
@@ -301,6 +370,13 @@ def run_sentinel_auto_healing(
             
     elif sentinel_res_strip.startswith("[ASK_USER]"):
         question = sentinel_res_strip.replace("[ASK_USER]", "").strip()
+        if sentinel_mode == "autonomous":
+            # Interceptar intento de preguntar en modo autónomo y forzarlo como FEEDBACK
+            log_msg = f"🛡️ @Sentinel intentó preguntar en modo autónomo. Redirigiendo a FEEDBACK: {question}"
+            logger.warning(log_msg)
+            scr_console.print(f"       [bold yellow]⚠[/bold yellow] [yellow]{log_msg}[/yellow]")
+            return "FEEDBACK", f"Sentinel solicitó depurar lo siguiente de forma autónoma: {question}"
+            
         scr_console.print("\n[bold yellow]──────────────────────────────────────────────────────────────────────[/bold yellow]")
         scr_console.print(f"[bold yellow]🛡️ @Sentinel REQUIERE TU AYUDA PARA DEPURAR:[/bold yellow]")
         scr_console.print(f"[yellow]{question}[/yellow]")

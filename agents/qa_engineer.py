@@ -65,12 +65,20 @@ class QAEngineerAgent(BaseAgent):
     def post_execute(self, response: str, context: dict) -> str:
         """Intercepta el código generado para validar su sintaxis Python (AST).
 
-        Si encuentra bloques de código Python, valida que tengan sintaxis
-        correcta y adjunta un reporte de validación al final de la respuesta.
-
-        Para tests más avanzados (ejecución real), se puede extender
-        este hook para usar core.agents.sandbox.run_in_sandbox().
+        Si encuentra bloques de código Python o si es un archivo .py directo,
+        valida que tengan sintaxis correcta.
         """
+        output_file = context.get("output_file", "") if context else ""
+
+        # Intentar validar respuesta completa como código Python si el destino es .py
+        if output_file.endswith(".py"):
+            try:
+                ast.parse(response)
+                logger.info("✓ Código de QA Engineer: Sintaxis Python válida para %s.", output_file)
+            except SyntaxError as e:
+                logger.warning("❌ Código de QA Engineer: Error de sintaxis en %s — %s", output_file, e)
+            return response
+
         code_blocks = re.findall(r"```python\s*(.*?)\s*```", response, re.DOTALL)
         if not code_blocks:
             return response

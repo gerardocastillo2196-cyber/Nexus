@@ -197,80 +197,277 @@ from core.utils import _safe_read
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
+class PersistedSet(set):
+    """Conjunto persistente que guarda automáticamente sus cambios en SQLite."""
+    def __init__(self, state, key, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.state = state
+        self.key = key
+
+    def add(self, element):
+        super().add(element)
+        self.state._save_state_var(self.key, list(self))
+
+    def discard(self, element):
+        super().discard(element)
+        self.state._save_state_var(self.key, list(self))
+
+    def remove(self, element):
+        super().remove(element)
+        self.state._save_state_var(self.key, list(self))
+
+    def clear(self):
+        super().clear()
+        self.state._save_state_var(self.key, list(self))
+
+    def update(self, *args):
+        super().update(*args)
+        self.state._save_state_var(self.key, list(self))
+
+
 class PersistedHistoryList(list):
+    """Lista de historial persistida en SQLite local para evitar inflación de RAM."""
     def __init__(self, state, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.state = state
         self._lock = threading.RLock()
+        self._db_path = os.path.join(AGENCY_DIR, "jellyfish_state.db")
+        self._init_db()
+
+    def _init_db(self):
+        with self._lock:
+            import sqlite3
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_path TEXT,
+                    role TEXT,
+                    content TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS global_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
+            conn.commit()
+            conn.close()
+
+    def _get_project_path(self):
+        return getattr(self.state, "active_project", "") or "default"
 
     def _truncate(self):
         with self._lock:
+            import sqlite3
             max_size = int(os.getenv("JELLYFISH_MAX_HISTORY_SIZE", "30"))
-            if len(self) > max_size:
-                diff = len(self) - max_size
-                evicted_items = []
-                for _ in range(diff):
-                    item = super().pop(0)
-                    evicted_items.append(item)
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM history WHERE project_path = ?", (project,))
+            count = cursor.fetchone()[0]
+            if count > max_size:
+                diff = count - max_size
+                cursor.execute("SELECT id, role, content FROM history WHERE project_path = ? ORDER BY id ASC LIMIT ?", (project, diff))
+                evicted = cursor.fetchall()
+                evicted_ids = [row[0] for row in evicted]
+                evicted_items = [{"role": row[1], "content": row[2]} for row in evicted]
+                
+                cursor.execute(f"DELETE FROM history WHERE id IN ({','.join('?' for _ in evicted_ids)})", evicted_ids)
+                conn.commit()
+
                 if hasattr(self.state, "summarized_message_count"):
                     self.state.summarized_message_count = max(0, self.state.summarized_message_count - diff)
                 
-                # Olvido dinámico: vectorizar recuerdos antiguos en la base RAG si está disponible
                 if hasattr(self.state, "rag") and self.state.rag and evicted_items:
                     try:
                         self.state.rag.index_history_memory(evicted_items)
                     except Exception as err:
                         logger.warning("No se pudieron vectorizar recuerdos expulsados: %s", err)
+            conn.close()
 
     def append(self, item):
         with self._lock:
-            super().append(item)
+            import sqlite3
+            role = item.get("role", "user")
+            content = item.get("content", "")
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO history (project_path, role, content) VALUES (?, ?, ?)",
+                (project, role, content)
+            )
+            conn.commit()
+            conn.close()
             self._truncate()
             if hasattr(self.state, "save_history_to_project"):
                 self.state.save_history_to_project()
 
     def extend(self, iterable):
         with self._lock:
-            super().extend(iterable)
+            import sqlite3
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            for item in iterable:
+                role = item.get("role", "user")
+                content = item.get("content", "")
+                cursor.execute(
+                    "INSERT INTO history (project_path, role, content) VALUES (?, ?, ?)",
+                    (project, role, content)
+                )
+            conn.commit()
+            conn.close()
             self._truncate()
             if hasattr(self.state, "save_history_to_project"):
                 self.state.save_history_to_project()
 
     def clear(self):
         with self._lock:
-            super().clear()
+            import sqlite3
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM history WHERE project_path = ?", (project,))
+            conn.commit()
+            conn.close()
             if hasattr(self.state, "save_history_to_project"):
                 self.state.save_history_to_project()
 
-    def __setitem__(self, index, value):
+    def __len__(self):
         with self._lock:
-            super().__setitem__(index, value)
-            if hasattr(self.state, "save_history_to_project"):
-                self.state.save_history_to_project()
+            import sqlite3
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM history WHERE project_path = ?", (project,))
+            count = cursor.fetchone()[0]
+            conn.close()
+            return count
 
-    def __delitem__(self, index):
+    def __getitem__(self, index):
         with self._lock:
-            super().__delitem__(index)
-            if hasattr(self.state, "save_history_to_project"):
-                self.state.save_history_to_project()
+            import sqlite3
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            
+            if isinstance(index, slice):
+                cursor.execute("SELECT role, content FROM history WHERE project_path = ? ORDER BY id ASC", (project,))
+                rows = cursor.fetchall()
+                conn.close()
+                return [{"role": r, "content": c} for r, c in rows[index]]
+            
+            if index < 0:
+                cursor.execute("SELECT COUNT(*) FROM history WHERE project_path = ?", (project,))
+                total = cursor.fetchone()[0]
+                index = total + index
+                if index < 0 or index >= total:
+                    conn.close()
+                    raise IndexError("list index out of range")
+
+            cursor.execute("SELECT role, content FROM history WHERE project_path = ? ORDER BY id ASC LIMIT 1 OFFSET ?", (project, index))
+            row = cursor.fetchone()
+            conn.close()
+            if not row:
+                raise IndexError("list index out of range")
+            return {"role": row[0], "content": row[1]}
+
+    def __iter__(self):
+        with self._lock:
+            import sqlite3
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT role, content FROM history WHERE project_path = ? ORDER BY id ASC", (project,))
+            rows = cursor.fetchall()
+            conn.close()
+            for row in rows:
+                yield {"role": row[0], "content": row[1]}
+
+    def __reversed__(self):
+        with self._lock:
+            import sqlite3
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT role, content FROM history WHERE project_path = ? ORDER BY id DESC", (project,))
+            rows = cursor.fetchall()
+            conn.close()
+            for row in rows:
+                yield {"role": row[0], "content": row[1]}
+
+    def __bool__(self):
+        return len(self) > 0
 
     def insert(self, index, item):
         with self._lock:
-            super().insert(index, item)
+            import sqlite3
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT role, content FROM history WHERE project_path = ? ORDER BY id ASC", (project,))
+            rows = [{"role": r, "content": c} for r, c in cursor.fetchall()]
+            rows.insert(index, item)
+            cursor.execute("DELETE FROM history WHERE project_path = ?", (project,))
+            for r in rows:
+                cursor.execute("INSERT INTO history (project_path, role, content) VALUES (?, ?, ?)", (project, r["role"], r["content"]))
+            conn.commit()
+            conn.close()
             self._truncate()
             if hasattr(self.state, "save_history_to_project"):
                 self.state.save_history_to_project()
 
     def pop(self, index=-1):
         with self._lock:
-            item = super().pop(index)
+            import sqlite3
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, role, content FROM history WHERE project_path = ? ORDER BY id ASC", (project,))
+            rows = cursor.fetchall()
+            if not rows:
+                conn.close()
+                raise IndexError("pop from empty list")
+            
+            if index < 0:
+                index = len(rows) + index
+            
+            if index < 0 or index >= len(rows):
+                conn.close()
+                raise IndexError("pop index out of range")
+                
+            target_id, role, content = rows[index]
+            cursor.execute("DELETE FROM history WHERE id = ?", (target_id,))
+            conn.commit()
+            conn.close()
             if hasattr(self.state, "save_history_to_project"):
                 self.state.save_history_to_project()
-            return item
+            return {"role": role, "content": content}
 
     def remove(self, item):
         with self._lock:
-            super().remove(item)
+            import sqlite3
+            project = self._get_project_path()
+            conn = sqlite3.connect(self._db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, role, content FROM history WHERE project_path = ? ORDER BY id ASC", (project,))
+            rows = cursor.fetchall()
+            target_id = None
+            for row in rows:
+                if row[1] == item.get("role") and row[2] == item.get("content"):
+                    target_id = row[0]
+                    break
+            if target_id is None:
+                conn.close()
+                raise ValueError("list.remove(x): x not in list")
+            cursor.execute("DELETE FROM history WHERE id = ?", (target_id,))
+            conn.commit()
+            conn.close()
             if hasattr(self.state, "save_history_to_project"):
                 self.state.save_history_to_project()
 
@@ -288,17 +485,125 @@ class JellyfishState:
     # Límite de caracteres por archivo individual
     MAX_FILE_CHARS = 4_000
 
+    def _save_state_var(self, key: str, value) -> None:
+        db_path = os.path.join(AGENCY_DIR, "jellyfish_state.db")
+        try:
+            import json
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            val_str = json.dumps(value)
+            cursor.execute(
+                "INSERT INTO global_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, val_str)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning("No se pudo persistir variable %s en SQLite: %s", key, e)
+
+    def _get_state_var(self, key: str, default=None):
+        db_path = os.path.join(AGENCY_DIR, "jellyfish_state.db")
+        if not os.path.exists(db_path):
+            return default
+        try:
+            import json
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM global_state WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                return json.loads(row[0])
+        except Exception as e:
+            logger.warning("No se pudo leer variable %s de SQLite: %s", key, e)
+        return default
+
+    @property
+    def active_agent(self) -> str:
+        with self._lock:
+            if not hasattr(self, "_active_agent_cache"):
+                self._active_agent_cache = self._get_state_var("active_agent", "default")
+            return self._active_agent_cache
+
+    @active_agent.setter
+    def active_agent(self, value: str) -> None:
+        with self._lock:
+            self._active_agent_cache = value
+            self._save_state_var("active_agent", value)
+
+    @property
+    def active_skills(self) -> set:
+        with self._lock:
+            if not hasattr(self, "_active_skills_cache"):
+                initial = self._get_state_var("active_skills", [])
+                self._active_skills_cache = PersistedSet(self, "active_skills", initial)
+            return self._active_skills_cache
+
+    @active_skills.setter
+    def active_skills(self, value) -> None:
+        with self._lock:
+            self._active_skills_cache = PersistedSet(self, "active_skills", value)
+            self._save_state_var("active_skills", list(value))
+
+    @property
+    def context_files(self) -> set:
+        with self._lock:
+            if not hasattr(self, "_context_files_cache"):
+                initial = self._get_state_var("context_files", [])
+                self._context_files_cache = PersistedSet(self, "context_files", initial)
+            return self._context_files_cache
+
+    @context_files.setter
+    def context_files(self, value) -> None:
+        with self._lock:
+            self._context_files_cache = PersistedSet(self, "context_files", value)
+            self._save_state_var("context_files", list(value))
+
+    @property
+    def active_project(self) -> str:
+        with self._lock:
+            if not hasattr(self, "_active_project_cache"):
+                self._active_project_cache = self._get_state_var("active_project", "")
+            return self._active_project_cache
+
+    @active_project.setter
+    def active_project(self, value: str) -> None:
+        with self._lock:
+            self._active_project_cache = value
+            self._save_state_var("active_project", value)
+
+    @property
+    def global_status(self) -> str:
+        with self._lock:
+            if not hasattr(self, "_global_status_cache"):
+                self._global_status_cache = self._get_state_var("global_status", "OK")
+            return self._global_status_cache
+
+    @global_status.setter
+    def global_status(self, value: str) -> None:
+        with self._lock:
+            self._global_status_cache = value
+            self._save_state_var("global_status", value)
+
     def __init__(self):
         self._lock = threading.RLock()
         self._async_lock = None
         self._loading_history = False
+        
+        # Primero inicializar la base de datos y la lista de historial
         self.history = PersistedHistoryList(self)
-        self.active_agent: str = "default"
-        self.active_skills: set = set()
-        self.context_files: set = set()
+        
+        # Cargar variables persistidas en la caché local para evitar accesos repetidos a disco
+        self._active_agent_cache = self._get_state_var("active_agent", "default")
+        self._active_skills_cache = PersistedSet(self, "active_skills", self._get_state_var("active_skills", []))
+        self._context_files_cache = PersistedSet(self, "context_files", self._get_state_var("context_files", []))
+        self._active_project_cache = self._get_state_var("active_project", "")
+        self._global_status_cache = self._get_state_var("global_status", "OK")
+        
         self.static_history: list = []   # Core Context (system prompts)
         self.system_prompt: str = ""
-        self.active_project: str = ""   # Ruta absoluta del proyecto activo
         self.project_methodology: str = "scrum"  # Metodología del proyecto
         self.session_tokens: int = 0    # Tokens acumulados de la sesión activa
         self.active_agency: str = "default"
@@ -310,7 +615,6 @@ class JellyfishState:
         
         # Blackboard y Estado Global (FASE 3)
         self.blackboard = Blackboard()
-        self.global_status: str = "OK"  # OK, PROCESS, ERROR, INPUT_REQUIRED
         self.agent_statuses: dict[str, str] = {
             "product_owner": "Inactivo",
             "scrum_master": "Inactivo",
@@ -325,7 +629,7 @@ class JellyfishState:
         self.scan_agencies()
         self._load_project_files_on_boot()
         self.load_history_from_project()
-        self.load_agent("default")
+        self.load_agent(self._active_agent_cache)
 
     def _load_project_files_on_boot(self) -> None:
         """Carga automáticamente los archivos de inteligencia técnica del proyecto activo al iniciar."""
@@ -770,16 +1074,38 @@ class JellyfishState:
                 })
 
     def get_full_history(self) -> list:
-        """Retorna el contexto completo: estático + historial recortado por presupuesto de tokens."""
+        """Retorna el contexto completo: estático + N-últimos mensajes recortados por presupuesto de tokens."""
         static_chars = sum(len(m.get("content", "")) for m in self.static_history)
         available_chars = max(_HISTORY_CHAR_BUDGET - static_chars, 0)
 
+        # Obtener los N-últimos mensajes directamente de la persistencia para ventana deslizante eficiente
+        max_messages = int(os.getenv("JELLYFISH_SLIDING_WINDOW", str(_SLIDING_WINDOW_MAX_MESSAGES)))
+        
+        project = getattr(self, "active_project", "") or "default"
+        db_path = os.path.join(AGENCY_DIR, "jellyfish_state.db")
+        
+        recent_messages = []
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT role, content FROM (SELECT id, role, content FROM history WHERE project_path = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC",
+                (project, max_messages)
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            recent_messages = [{"role": r, "content": c} for r, c in rows]
+        except Exception as e:
+            logger.warning("Error consultando últimos mensajes de SQLite: %s", e)
+            recent_messages = list(self.history)[-max_messages:]
+
         selected: list = []
         used_chars = 0
-        for msg in reversed(self.history):
+        for msg in reversed(recent_messages):
             msg_chars = len(msg.get("content", ""))
             if used_chars + msg_chars > available_chars:
-                if not selected and msg is self.history[-1]:
+                if not selected and msg is recent_messages[-1]:
                     preserve_chars = max(available_chars, min(msg_chars, 2_000))
                     content = msg.get("content", "")
                     if len(content) > preserve_chars:
@@ -788,15 +1114,6 @@ class JellyfishState:
                 break
             selected.insert(0, msg)
             used_chars += msg_chars
-
-        # Ventana deslizante estricta: recortar a _SLIDING_WINDOW_MAX_MESSAGES
-        if len(selected) > _SLIDING_WINDOW_MAX_MESSAGES:
-            excess = len(selected) - _SLIDING_WINDOW_MAX_MESSAGES
-            selected = selected[excess:]
-            logger.debug(
-                "Sliding window: %d mensajes recortados (límite: %d).",
-                excess, _SLIDING_WINDOW_MAX_MESSAGES
-            )
 
         if len(selected) < len(self.history):
             dropped = len(self.history) - len(selected)

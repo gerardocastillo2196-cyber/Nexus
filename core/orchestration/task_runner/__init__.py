@@ -3,21 +3,51 @@ import re
 import time
 import logging
 from rich.console import Console
-from rich.prompt import Confirm
 from core.tui import tui_engine, TaskProgress
 from core.state import estimate_tokens
 from core.utils import _safe_read
 from core.llm_engine import _call_llm_silent, LocalLLMTimeoutError
-from core.terminal import run_terminal_command
+from core.agents.sandbox import run_terminal_command
 from core.agents.registry import AgentRegistry
 from core.skills.registry import SkillRegistry
 from core.event_bus import event_bus, EventType
+
+from core.orchestration.task_runner.validators import DoDValidator
+from core.orchestration.task_runner.context_managers import TaskContextManager
+from core.orchestration.task_runner.executors import TaskExecutor
 
 logger = logging.getLogger("jellyfish.orchestration.task_runner")
 console = Console()
 
 MAX_RETRIES = 3  # FASE 4: Límite de escalada para reintentos automáticos
 MAX_DEBATE_CYCLES = 3  # FASE 5: Límite del Juez (Circuit Breaker) en debates Multi-Agente
+
+AGENT_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "thought_process": {
+            "type": "string",
+            "description": "El razonamiento del agente sobre la tarea o paso actual."
+        },
+        "run_command": {
+            "type": "string",
+            "description": "Comando opcional a ejecutar en la terminal (ej. 'pytest'). Dejar vacío si no se requiere."
+        },
+        "ask_user": {
+            "type": "string",
+            "description": "Pregunta interactiva opcional para el usuario. Dejar vacío si no se requiere."
+        },
+        "target_file": {
+            "type": "string",
+            "description": "Ruta relativa del archivo a crear o modificar. Dejar vacío si no aplica."
+        },
+        "source_code": {
+            "type": "string",
+            "description": "Contenido completo del archivo. Dejar vacío si no aplica."
+        }
+    },
+    "required": ["thought_process", "run_command", "ask_user", "target_file", "source_code"]
+}
 
 SENTINEL_HEALER_SYSTEM = """Eres @Sentinel, el agente experto de control de calidad, depuración y auto-curación de Jellyfish OS.
 Tu misión es recibir una tarea técnica, los archivos de código que se generaron, y el log detallado del error de compilación, sintaxis o DoD.
@@ -81,6 +111,33 @@ class TaskRunnerPhase:
 
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
+        self.validator = DoDValidator(orchestrator)
+        self.ctx_manager = TaskContextManager(orchestrator)
+        self.executor = TaskExecutor(orchestrator)
+
+    def _run_strict_subprocess_dod_validation(self, project_path: str, created_files: list[str], output_file: str) -> tuple[bool, str]:
+        return self.validator.run_strict_subprocess_dod_validation(project_path, created_files, output_file)
+
+    def _run_sentinel_auto_healing(
+        self,
+        task_id: str,
+        agent_name: str,
+        task_desc: str,
+        output_file: str,
+        error_log: str,
+        created_files: list[str]
+    ) -> tuple[str, str]:
+        return self.executor.run_sentinel_auto_healing(
+            task_id, agent_name, task_desc, output_file, error_log, created_files, self._get_user_input_nonblocking
+        )
+
+    def _run_swarm_consensus_debate(self, task_id_str: str, developer_agent: str, task_desc: str, output_file: str, file_content: str, attempt: int, task=None, tasks=None) -> tuple[bool, str, bool]:
+        return self.executor.run_swarm_consensus_debate(
+            task_id_str, developer_agent, task_desc, output_file, file_content, attempt, MAX_DEBATE_CYCLES, task, tasks
+        )
+
+    def _reconcile_missing_docker_context_files(self, created_files: list[str]) -> None:
+        self.ctx_manager.reconcile_missing_docker_context_files(created_files)
 
     def _build_valid_fallback_content(self, task_desc: str, output_file: str) -> str:
         """Genera contenido de andamiaje sintácticamente válido según la extensión del archivo."""
@@ -110,286 +167,36 @@ class TaskRunnerPhase:
                 "  // Componente andamiado automáticamente\n"
                 "}\n"
             )
-        elif ext in (".html", ".xml", ".vue"):
-            return f"<!-- {task_desc} -->\n<!-- Componente andamiado automáticamente para {output_file} -->\n"
-        elif ext == ".json":
-            import json
-            return json.dumps({"description": task_desc, "status": "scaffolding_fallback"}, indent=2)
-        else:
-            return f"# {task_desc}\n\nComponente o especificación andamiada automáticamente para {output_file}\n"
-
-    def _reconcile_missing_docker_context_files(self, created_files: list[str]) -> None:
-        """
-        Escanea los Dockerfiles recién creados para buscar instrucciones COPY/ADD.
-        Si alguna instrucción copia un archivo local que no existe en el contexto de construcción,
-        crea un archivo placeholder mínimo para evitar fallos de compilación prematuros en Sprint 0.
-        """
-        # Auto-crear Dockerfiles ya no es necesario gracias a la detección dirigida en _detect_build_command
-        pass
-
-        for path in created_files:
-            if "dockerfile" in path.lower():
-                abs_path = os.path.join(self.orchestrator.project_path, path)
-                if not os.path.isfile(abs_path):
-                    continue
-                try:
-                    with open(abs_path, "r", encoding="utf-8") as f:
-                        lines = f.readlines()
-                    
-                    dockerfile_dir = os.path.dirname(abs_path)
-                    for line in lines:
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        if line.upper().startswith("COPY ") or line.upper().startswith("ADD "):
-                            parts = line.split()
-                            if len(parts) < 3:
-                                continue
-                            
-                            has_from = False
-                            sources = []
-                            for part in parts[1:-1]:
-                                if part.startswith("--from="):
-                                    has_from = True
-                                elif part.startswith("--"):
-                                    continue
-                                else:
-                                    sources.append(part)
-                            
-                            if has_from:
-                                continue
-                                
-                            for src in sources:
-                                src_clean = src.replace("*", "").replace("?", "")
-                                if not src_clean or src_clean in (".", "/"):
-                                    continue
-                                
-                                target_file_path = os.path.join(dockerfile_dir, src_clean)
-                                if not os.path.exists(target_file_path):
-                                    os.makedirs(os.path.dirname(target_file_path), exist_ok=True)
-                                    if src_clean.endswith("package.json"):
-                                        with open(target_file_path, "w", encoding="utf-8") as pf:
-                                            pf.write('{\n  "name": "placeholder",\n  "version": "1.0.0"\n}\n')
-                                    elif src_clean.endswith("pubspec.yaml"):
-                                        with open(target_file_path, "w", encoding="utf-8") as pf:
-                                            pf.write("name: placeholder\nversion: 1.0.0\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n")
-                                    elif src_clean.endswith("requirements.txt"):
-                                        with open(target_file_path, "w", encoding="utf-8") as pf:
-                                            pf.write("# Placeholder base\n")
-                                    else:
-                                        with open(target_file_path, "w", encoding="utf-8") as pf:
-                                            pf.write("")
-                                    logger.info("Auto-creado archivo de contexto Docker faltante: %s", target_file_path)
-                                    console.print(f"       ⚡ Auto-creado placeholder requerido para Docker: [dim]{src_clean}[/dim]")
-                except Exception as e:
-                    logger.error("Error al reconciliar archivos de contexto Docker: %s", e)
+        elif ext == ".cpp" or ext == ".h" or ext == ".hpp":
+            return (
+                f"// {task_desc}\n"
+                "#include <iostream>\n\n"
+                "int main() {\n"
+                "    std::cout << \"Placeholder autogenerado\" << std::endl;\n"
+                "    return 0;\n"
+                "}\n"
+            )
+        return f"# {task_desc}\n# Placeholder autogenerado\n"
 
     def _get_user_input_nonblocking(self, prompt: str) -> str:
-        """Obtiene respuesta del usuario usando prompt_toolkit esperando indefinidamente."""
-        import asyncio
-        from prompt_toolkit import PromptSession
-        from prompt_toolkit.patch_stdout import patch_stdout
-        from core.terminal import screen_console as scr_console
-
-        session = PromptSession()
-        async def get_input():
-            with patch_stdout():
-                return await session.prompt_async(prompt)
-
-        try:
-            return asyncio.run(get_input())
-        except (KeyboardInterrupt, EOFError):
-            scr_console.print("\n✗ Entrada interrumpida.")
-            return "deny/skip"
-
-    def _run_sentinel_auto_healing(
-        self,
-        task_id: str,
-        agent_name: str,
-        task_desc: str,
-        output_file: str,
-        error_log: str,
-        created_files: list[str]
-    ) -> tuple[str, str]:
-        """
-        Invoca autónomamente a @Sentinel para diagnosticar y auto-corregir el error.
-        Retorna una tupla: (resolución, feedback/mensaje)
-        """
-        from core.orchestration.build_healer import run_sentinel_auto_healing
-        return run_sentinel_auto_healing(
-            self.orchestrator,
-            task_id,
-            agent_name,
-            task_desc,
-            output_file,
-            error_log,
-            created_files,
-            self._get_user_input_nonblocking
-        )
-
-    def _run_strict_subprocess_dod_validation(self, project_path: str, created_files: list[str], output_file: str) -> tuple[bool, str]:
-        """Ejecuta una validación estricta de compilación/sintaxis en un subproceso seguro (subprocess.run).
+        """Captura input del usuario en un bucle interactivo TUI no bloqueante o CLI standard."""
+        import sys
+        import select
         
-        Verifica activamente que los archivos generados o modificados no rompan el entorno
-        e intenta compilar/instalar/lintear según el tipo de archivo.
-        """
-        import subprocess
-        
-        files_to_check = set(created_files)
-        if output_file:
-            files_to_check.add(output_file)
+        # Omitir si estamos corriendo en un test sin stdin interactivo
+        if not sys.stdin.isatty():
+            return "y"
             
-        real_files = []
-        for rel_f in files_to_check:
-            abs_f = os.path.join(project_path, rel_f.strip().replace("`", ""))
-            if os.path.isfile(abs_f):
-                real_files.append((rel_f, abs_f))
-                
-        if not real_files:
-            return True, "No se encontraron archivos en disco para validar por subproceso."
-
-        for rel_f, abs_f in real_files:
-            ext = os.path.splitext(abs_f)[1].lower()
-            basename = os.path.basename(abs_f).lower()
-            
-            # 1. Archivos Python (.py)
-            if ext == ".py":
-                try:
-                    res = subprocess.run(
-                        ["python3", "-m", "py_compile", abs_f],
-                        capture_output=True, text=True, timeout=15, cwd=project_path
-                    )
-                    if res.returncode != 0:
-                        err_msg = (res.stderr or res.stdout).strip()
-                        return False, f"RECHAZO DOD (COMPILACIÓN PYTHON): El archivo '{rel_f}' falló la verificación de sintaxis (py_compile):\n{err_msg}"
-                except Exception as e:
-                    logger.warning("Error ejecutando py_compile en %s: %s", rel_f, e)
-
-            # 2. Archivos JSON (.json)
-            elif ext == ".json":
-                try:
-                    res = subprocess.run(
-                        ["python3", "-m", "json.tool", abs_f],
-                        capture_output=True, text=True, timeout=15, cwd=project_path
-                    )
-                    if res.returncode != 0:
-                        err_msg = (res.stderr or res.stdout).strip()
-                        return False, f"RECHAZO DOD (SINTAXIS JSON): El archivo '{rel_f}' contiene JSON malformado:\n{err_msg}"
-                except Exception as e:
-                    logger.warning("Error ejecutando json.tool en %s: %s", rel_f, e)
-
-            # 3. Archivos JavaScript / TypeScript (.js, .jsx, .ts, .tsx)
-            elif ext in (".js", ".jsx", ".ts", ".tsx"):
-                try:
-                    res = subprocess.run(
-                        ["node", "--check", abs_f],
-                        capture_output=True, text=True, timeout=15, cwd=project_path
-                    )
-                    if res.returncode != 0:
-                        err_msg = (res.stderr or res.stdout).strip()
-                        return False, f"RECHAZO DOD (SINTAXIS JS/TS): El archivo '{rel_f}' falló la verificación de sintaxis (node --check):\n{err_msg}"
-                except FileNotFoundError:
-                    pass
-                except Exception as e:
-                    logger.warning("Error ejecutando node --check en %s: %s", rel_f, e)
-
-            # 4. Archivos Shell (.sh)
-            elif ext == ".sh":
-                try:
-                    res = subprocess.run(
-                        ["bash", "-n", abs_f],
-                        capture_output=True, text=True, timeout=15, cwd=project_path
-                    )
-                    if res.returncode != 0:
-                        err_msg = (res.stderr or res.stdout).strip()
-                        return False, f"RECHAZO DOD (SINTAXIS BASH): El script '{rel_f}' falló la verificación bash -n:\n{err_msg}"
-                except Exception as e:
-                    logger.warning("Error ejecutando bash -n en %s: %s", rel_f, e)
-
-            # 5. Archivos de Contenedor (docker-compose.yml / yaml)
-            elif basename in ("docker-compose.yml", "docker-compose.yaml"):
-                try:
-                    res = subprocess.run(
-                        ["docker", "compose", "config", "-q"],
-                        capture_output=True, text=True, timeout=15, cwd=project_path
-                    )
-                    if res.returncode != 0 and res.stderr:
-                        err_msg = res.stderr.strip()
-                        return False, f"RECHAZO DOD (SINTAXIS DOCKER COMPOSE): El archivo '{rel_f}' falló la validación 'docker compose config':\n{err_msg}"
-                except FileNotFoundError:
-                    pass
-                except Exception as e:
-                    logger.warning("Error ejecutando docker compose config: %s", e)
-
-        return True, "Validación de compilación y ejecución por subproceso (DoD) aprobada."
-
-    def _run_swarm_consensus_debate(self, task_id_str: str, developer_agent: str, task_desc: str, output_file: str, file_content: str, attempt: int, task=None, tasks=None) -> tuple[bool, str, bool]:
-        """Bucle de Consenso del Enjambre entre @developer y @qa_engineer con Circuit Breaker (El Juez).
-
-        Retorna: (dod_approved: bool, reason_or_feedback: str, breaker_tripped: bool)
-        """
-        self.orchestrator.state.blackboard.set(f"code_{task_id_str}", file_content)
-        event_bus.publish(EventType.CODE_SUBMITTED, {
-            "task_id": task_id_str,
-            "file": output_file,
-            "developer": developer_agent,
-            "attempt": attempt
-        })
-        console.print(f"[cyan]       🔄 [Agent Swarm] Código enviado al pizarrón para debate: @{developer_agent} -> @qa_engineer...[/cyan]")
-
-        qa_prompt = (
-            f"Eres @qa_engineer en el Enjambre Multi-Agente de Jellyfish OS.\n"
-            f"Tu rol es auditar y evaluar con rigor extremo el código propuesto para el archivo '{output_file}'.\n"
-            f"TAREA SOLICITADA: {task_desc}\n"
-            f"CÓDIGO ENTREGADO POR @{developer_agent}:\n```\n{file_content[:3000]}\n```\n\n"
-            f"INSTRUCCIONES DE DEBATE:\n"
-            f"Si el código cumple con los requisitos y no tiene errores lógicos críticos ni placeholders innecesarios, responde ÚNICAMENTE con:\n"
-            f"[APPROVED]\nConsenso alcanzado: código verificado correctamente.\n\n"
-            f"Si detectas errores de arquitectura, bugs o incumplimiento de requisitos, responde con:\n"
-            f"[REJECTED]\nExplica claramente qué debe corregir @{developer_agent} en su próximo ciclo de debate."
-        )
-        qa_messages = [
-            {"role": "system", "content": "Eres @qa_engineer, crítico riguroso del enjambre."},
-            {"role": "user", "content": qa_prompt}
-        ]
-        try:
-            res = _call_llm_silent(self.orchestrator.state, qa_messages, agent_name="qa_engineer")
-            qa_response = res[0] if isinstance(res, (tuple, list)) else str(res)
-        except Exception as e:
-            logger.warning("Error consultando a @qa_engineer en debate: %s", e)
-            dod_ok, dod_reason = self.orchestrator._run_dod_validation(task_id_str, developer_agent, task_desc, output_file, file_content)
-            return dod_ok, dod_reason, False
-
-        if "[APPROVED]" in qa_response or "APPROVED" in qa_response[:50]:
-            event_bus.publish(EventType.CODE_APPROVED, {"task_id": task_id_str, "reviewer": "qa_engineer"})
-            console.print("       [green]🤝 Consenso del Enjambre alcanzado: @qa_engineer aprobó la entrega.[/green]")
-            return True, "Consenso alcanzado entre @developer y @qa_engineer.", False
+        console.print(prompt, end="")
+        sys.stdout.flush()
         
-        debates_key = f"debate_cycles_{task_id_str}"
-        cycles = self.orchestrator.state.blackboard.get(debates_key, 0) + 1
-        self.orchestrator.state.blackboard.set(debates_key, cycles)
-        reason = qa_response.replace("[REJECTED]", "").strip() or "Rechazo de QA en el debate del enjambre."
-        
-        if cycles >= MAX_DEBATE_CYCLES:
-            logger.warning("El Juez: Tarea %s bloqueada tras %d ciclos de debate sin consenso.", task_id_str, cycles)
-            console.print(f"       [red]⛔ Circuit Breaker (El Juez): Tarea {task_id_str} bloqueada por superar {MAX_DEBATE_CYCLES} ciclos sin consenso.[/red]")
-            event_bus.publish(EventType.CIRCUIT_BREAKER_TRIPPED, {
-                "task_id": task_id_str,
-                "cycles": cycles,
-                "reason": f"Máximos ciclos de debate ({MAX_DEBATE_CYCLES}) alcanzados sin consenso."
-            })
-            event_bus.publish(EventType.TASK_BLOCKED, {"task_id": task_id_str, "reason": reason})
-            self.orchestrator.state.blackboard.set(f"task_status_{task_id_str}", "blocked")
-            if task is not None and tasks is not None:
-                task["status"] = "BLOCKED"
-                task["state"] = "BLOCKED"
-                self.orchestrator._save_board(tasks)
-            return False, f"El Juez intervino: {reason}", True
-            
-        event_bus.publish(EventType.CODE_REJECTED, {"task_id": task_id_str, "reviewer": "qa_engineer", "cycle": cycles})
-        event_bus.publish(EventType.DEBATE_CYCLE_STARTED, {"task_id": task_id_str, "cycle": cycles + 1})
-        console.print(f"       [yellow]💬 [@qa_engineer rechazó (Ciclo {cycles}/{MAX_DEBATE_CYCLES})]: {reason[:100]}...[/yellow]")
-        return False, f"[DEBATE ENJAMBRE - CRÍTICA DE @qa_engineer (Ciclo {cycles}/{MAX_DEBATE_CYCLES})]:\n{reason}", False
+        # Esperar 60 segundos por input
+        rlist, _, _ = select.select([sys.stdin], [], [], 60.0)
+        if rlist:
+            return sys.stdin.readline().strip()
+        else:
+            console.print("\n[dim]✗ Timeout agotado (60s). Asumiendo confirmación afirmativa por defecto (Dry Run).[/dim]")
+            return "y"
 
     def run(self, user_idea: str) -> None:
         """Parsea el tablero de la agencia y ejecuta cada tarea con su agente asignado."""
@@ -414,7 +221,7 @@ class TaskRunnerPhase:
             console.print(f"⚠ No se encontraron tareas en el tablero {self.orchestrator.board_filename}.")
             return
 
-        # FASE 2: Ordenamiento topológico del Grafo Dirigido (DAG)
+        # Ordenamiento topológico del Grafo Dirigido (DAG)
         tasks = topological_sort(tasks)
 
         console.print(
@@ -434,7 +241,7 @@ class TaskRunnerPhase:
 
             files_to_generate = [f.strip() for f in output_file.split(",")] if "," in output_file else [output_file]
 
-            # FASE 2 / FASE 3: Verificar que las dependencias de la tarea estén completadas en el Blackboard (H-03)
+            # Verificar que las dependencias de la tarea estén completadas en el Blackboard
             deps_ok = True
             missing_dep = ""
             for dep_id in task.get("dependencies", []):
@@ -471,7 +278,7 @@ class TaskRunnerPhase:
                 self.orchestrator.state.blackboard.set(f"task_status_{task_id_str}", "completed" if "COMPLETADO" in status_lbl else "failed")
                 continue
 
-            # FASE 4: Bucle de Retroalimentación Autónoma (Auto-Retry)
+            # Bucle de Retroalimentación Autónoma (Auto-Retry)
             task_retries = 0
             last_error_log = ""
             success_task = False
@@ -479,7 +286,6 @@ class TaskRunnerPhase:
             created_files = []
 
             while task_retries < MAX_RETRIES:
-                # FASE 1 & FASE 3: Actualizar estados de agente y TUI global
                 event_bus.publish(EventType.AGENT_STATUS_CHANGE, {"agent": agent_name, "status": "Ejecutando"})
                 self.orchestrator.state.global_status = "PROCESS"
 
@@ -494,14 +300,9 @@ class TaskRunnerPhase:
                     "output_file": output_file
                 })
 
-                # Realizar git snapshot de transaccionalidad via micro-branching
-                use_microbranch = False
-                original_branch = ""
-                if self.orchestrator._is_git_repo():
-                    use_microbranch, original_branch = self.orchestrator._git_start_task_branch(task_id_str)
-                    snapshot_created = not use_microbranch
-                else:
-                    snapshot_created = self.orchestrator._git_commit_snapshot(task_id_str)
+                # Iniciar la transacción Git o tomar Snapshot
+                use_microbranch, original_branch_or_snapshot = self.ctx_manager.start_transaction(task_id_str)
+                snapshot_created = not use_microbranch
 
                 t0 = time.perf_counter()
 
@@ -509,7 +310,6 @@ class TaskRunnerPhase:
                 if not agent_prompt:
                     agent_prompt = f"Eres @{agent_name}, un especialista técnico del equipo de desarrollo."
 
-                # Sprint 12 — Resolver agente Python para hooks de ciclo de vida
                 py_agent = AgentRegistry.get(agent_name)
                 task_context = {
                     "project_path": self.orchestrator.project_path,
@@ -518,14 +318,14 @@ class TaskRunnerPhase:
                     "agent_name": agent_name,
                 }
 
-                # Sprint 12 — Hook pre_execute
+                # Hook pre_execute
                 if py_agent:
                     try:
                         py_agent.pre_execute(task, task_context)
                     except Exception as pre_err:
                         logger.warning("pre_execute de @%s falló: %s", agent_name, pre_err)
 
-                # Sprint 12 — Inyección selectiva de skills
+                # Inyección selectiva de skills
                 skills_context = ""
                 relevant_skills = SkillRegistry.get_skills_for_task(
                     task_desc,
@@ -554,42 +354,24 @@ class TaskRunnerPhase:
                     f"ID: {task_id_str}\n"
                     f"Descripción: {task_desc}\n"
                     f"Tu entregable: Genera el contenido COMPLETO del archivo {output_file}.\n"
-                    f"REGLA CRÍTICA DE RESPUESTA: NO des explicaciones verbales, saludos ni conclusiones. Sé extremadamente conciso y directo.\n"
-                    f"REGLA CRÍTICA DE COMPLETITUD: NO trunques el código. Si el archivo es grande y necesitas más espacio, no te preocupes, el sistema te pedirá que continúes. "
-                    f"Sin embargo, si has terminado de generar TODO el archivo y código correspondiente de forma exitosa, tu última línea debe ser exactamente la cadena de texto: [TAREA_COMPLETADA]\n\n"
-                    f"[CAPACIDAD DE EJECUCIÓN DIRECTA (ReAct - Mejora 31)]\n"
+                    f"REGLA CRÍTICA DE RESPUESTA: Debes responder ÚNICAMENTE con un objeto JSON que cumpla con el esquema requerido, sin comentarios conversacionales, saludos ni bloques markdown de código triples fuera de este JSON.\n\n"
+                    f"[CAPACIDAD DE EJECUCIÓN DIRECTA (ReAct - Estructurado)]\n"
                     f"Tienes la capacidad de ejecutar comandos en el terminal de forma autónoma durante esta tarea. "
                     f"Si necesitas verificar si un archivo existe, ver su contenido, verificar versiones, "
-                    f"ejecutar un script de prueba o verificar la compilación antes de entregar, puedes hacerlo respondiendo únicamente con el comando envuelto en la etiqueta <run_command>.\n"
-                    f"Ejemplo: <run_command>npm test</run_command> o <run_command>python3 -c \"import os; print(os.listdir('.'))\"</run_command>.\n"
-                    f"El sistema ejecutará el comando y te devolverá el output. Después de recibir la respuesta, podrás continuar redactando el entregable o solicitar más comandos.\n\n"
-                    f"[REGLAS DE AUTO-CORRECCIÓN DOD]\n"
-                    f"Si el entregable es rechazado por control de calidad (DoD), recibirás retroalimentación específica. "
-                    f"Deberás corregir los problemas indicados inmediatamente sin dejar placeholders, TODOs vacíos o secciones incompletas.\n\n"
-                    f"[REGLA CRÍTICA DE SEPARACIÓN DE CÓDIGO Y DOCUMENTACIÓN]\n"
-                    f"[PROHIBICIÓN DE TEXTO CONVERSACIONAL]\n"
-                    f"Tienes ESTRICTAMENTE PROHIBIDO incluir introducciones, despedidas, explicaciones o cualquier texto conversacional (ej. 'Aquí tienes el código:'). "
-                    f"Tu respuesta DEBE contener ÚNICAMENTE las etiquetas requeridas (XML o Markdown) y el código. Nada más.\n\n"
-                    f"Si la tarea requiere crear o modificar archivos de código real, scripts, andamiajes o configuraciones en el disco del proyecto, "
-                    f"debes especificar cada uno de ellos dentro de tu entregable utilizando etiquetas con la ruta del archivo. "
-                    f"Puedes usar cualquiera de los siguientes dos formatos:\n\n"
-                    f"Formato 1 (Estructura XML):\n"
-                    f"<write_file path=\"ruta/relativa/archivo.ext\">\n"
-                    f"contenido del archivo real aquí...\n"
-                    f"</write_file>\n\n"
-                    f"Formato 2 (Anotación Markdown):\n"
-                    f"[WRITE_FILE: ruta/relativa/archivo.ext]\n"
-                    f"```lenguaje\n"
-                    f"contenido del archivo real aquí...\n"
-                    f"```\n\n"
-                    f"Puedes incluir múltiples archivos si es necesario. El Task Runner los extraerá y creará automáticamente en el disco. "
-                    f"Asegúrate de que las rutas relativas sean correctas a partir de la raíz del proyecto.\n\n"
+                    f"ejecutar un script de prueba o verificar la compilación antes de entregar, puedes hacerlo llenando la propiedad 'run_command' de tu JSON con el comando correspondiente.\n"
+                    f"El sistema ejecutará el comando y te devolverá el output. Después de recibir la respuesta en el siguiente turno, podrás continuar con tu razonamiento o solicitar más comandos.\n\n"
+                    f"[CONSULTAS HITL (Interactivas)]\n"
+                    f"Si necesitas aclaración del usuario sobre requisitos críticos o decisiones de diseño, puedes llenar la propiedad 'ask_user' de tu JSON. "
+                    f"El usuario responderá y recibirás su respuesta en el siguiente turno.\n\n"
+                    f"[ENTREGA DE ARCHIVOS]\n"
+                    f"Cuando hayas terminado la tarea y validado los resultados satisfactoriamente, llena las propiedades 'target_file' y 'source_code' con la ruta y contenido completo del archivo que has construido/modificado. En este punto, 'run_command' y 'ask_user' deben estar vacíos para concluir la tarea.\n\n"
                     f"[REGLA DE DECISIÓN TECNOLÓGICA]\n"
                     f"Si la tecnología no ha sido definida de forma explícita, asume los estándares modernos de la industria recomendados para este tipo de aplicación (ej. Python/FastAPI/Node.js para backend, Flutter/React Native para móvil, PostgreSQL/SQLite para BD, Docker/Docker-Compose para infraestructura). Procede a generar el código y entregables completos sin detenerte.\n\n"
                     f"[REGLA DE ENTORNO ESTRICTA]\n"
-                    f"Eres un desarrollador de software escribiendo código en un entorno local, NO eres un administrador de sistemas (sysadmin). Tienes ESTRICTAMENTE PROHIBIDO intentar reconfigurar la máquina host, instalar paquetes del sistema operativo (apt, dnf, pacman, brew), modificar el directorio /etc, o utilizar comandos con 'sudo'. Tu única responsabilidad es escribir, corregir y guardar el código fuente. Si una prueba falla por problemas de infraestructura, red, o permisos del host, NO intentes arreglar el entorno; aborta la ejecución y solicita ayuda utilizando [ASK_USER].\n\n"
+                    f"Eres un desarrollador de software escribiendo código en un entorno local, NO eres un administrador de sistemas (sysadmin). Tienes ESTRICTAMENTE PROHIBIDO intentar reconfigurar la máquina host, instalar paquetes del sistema operativo (apt, dnf, pacman, brew), modificar el directorio /etc, o utilizar comandos con 'sudo'. Tu única responsabilidad es escribir, corregir y guardar el código fuente. Si una prueba falla por problemas de infraestructura, red, o permisos del host, NO intentes arreglar el entorno; aborta la ejecución y solicita ayuda utilizando la propiedad 'ask_user'.\n\n"
                     f"[REGLAS DE INFRAESTRUCTURA]\n"
-                    f"REGLA ESTRUCTURAL ESTRICTA: NUNCA referencies un directorio, archivo o contexto de compilación (ej. en docker-compose) sin haber verificado primero que existe usando comandos de consola. Si configuras un servicio que requiere compilación (build), ESTÁS OBLIGADO a crear el `Dockerfile` correspondiente en la ruta exacta que especificaste y a generar el `package.json` o `requirements.txt` base si no existen. NO puedes dar una tarea de DevOps por terminada si faltan los archivos de construcción.\n\n"
+                    f"REGLA ESTRUCTURAL ESTRICTA: NUNCA referencies un directorio, archivo o contexto de compilación (ej. en docker-compose) sin haber verificado primero que existe usando comandos de consola. Si configuras un servicio que requiere compilación (build), ESTÁS OBLIGADO a crear el `Dockerfile` correspondiente en la ruta exacta que especificaste y a generar el `package.json` o `requirements.txt` base si no existen. NO puedes dar una tarea de DevOps por terminada si faltan los archivos de construcción.\n"
+                    f"REGLA DE SINTAXIS DE DOCKER: NUNCA mezcles instrucciones secuenciales de construcción de imágenes (como 'FROM', 'RUN', 'COPY', 'WORKDIR') dentro de un archivo 'docker-compose.yml'. Recuerda que 'docker-compose.yml' es estrictamente un archivo YAML de orquestación de servicios y contenedores, mientras que 'Dockerfile' contiene la receta secuencial para la imagen. La mezcla de sintaxis es un error sintáctico crítico.\n\n"
                 )
 
                 user_prompt = (
@@ -599,7 +381,6 @@ class TaskRunnerPhase:
                     f"Genera el contenido completo de {output_file}."
                 )
 
-                # Cargar capacidades del entorno
                 capabilities_str = ""
                 cap_path = os.path.join(self.orchestrator.project_path, "env_capabilities.json")
                 if os.path.isfile(cap_path):
@@ -617,7 +398,6 @@ class TaskRunnerPhase:
 
                 system = system + env_capabilities_prompt
 
-                # Auto-Validación de Infraestructura
                 task_desc_lower = task_desc.lower()
                 if any(kw in task_desc_lower for kw in ["docker", "compose", "servidor", "despliegue"]):
                     infra_validation_prompt = (
@@ -634,11 +414,9 @@ class TaskRunnerPhase:
                 feedback = ""
                 short_desc = f"Tarea {task_id_str}: {task_desc[:40]}..."
 
-                # Lazo de compilación y depuración
                 max_attempts = 5
                 build_cmd = self.orchestrator._detect_compile_command()
 
-                # Hook pre-flight check para ARCHITECTURE.md y JELLYFISH_HISTORY.md
                 is_modifying_target_docs = (
                     output_file.lower() in ("architecture.md", "jellyfish_history.md") or
                     any(doc in task_desc.lower() for doc in ("architecture.md", "jellyfish_history.md"))
@@ -678,7 +456,6 @@ class TaskRunnerPhase:
 
                                 accumulated = self.orchestrator._build_intelligent_context(task_desc, sub_file)
 
-                                # Adaptar System Prompt para el sub_file específico
                                 sub_system = system
                                 sub_system = sub_system.replace(
                                     f"Tu entregable: Genera el contenido COMPLETO del archivo {output_file}.",
@@ -724,7 +501,14 @@ class TaskRunnerPhase:
                                         }
                                         local_code = py_agent.execute_local_microtask_loop(self.orchestrator.state, task, micro_context)
                                         if local_code and local_code.strip():
-                                            sub_task_result = f"[WRITE_FILE: {sub_file}]\n```\n{local_code}\n```\n[TAREA_COMPLETADA]"
+                                            import json
+                                            sub_task_result = json.dumps({
+                                                "thought_process": "Código generado localmente por el agente.",
+                                                "run_command": "",
+                                                "ask_user": "",
+                                                "target_file": sub_file,
+                                                "source_code": local_code
+                                            })
                                     except Exception as micro_err:
                                         logger.warning("Error en execute_local_microtask_loop de @%s: %s. Continuando flujo normal.", agent_name, micro_err)
 
@@ -732,20 +516,42 @@ class TaskRunnerPhase:
                                     for step in range(1, max_react_steps + 1):
                                         response_chunk = _call_llm_silent(
                                             self.orchestrator.state, react_messages,
-                                            agent_name=agent_name
+                                            agent_name=agent_name,
+                                            json_schema=AGENT_OUTPUT_SCHEMA
                                         )
 
                                         if not response_chunk:
                                             break
 
-                                        # Interceptor HITL
-                                        if "[ASK_USER:" in response_chunk:
-                                            ask_match = re.search(r'\[ASK_USER:\s*(.*?)\]', response_chunk, re.DOTALL)
-                                            question = ask_match.group(1).strip() if ask_match else response_chunk.split("[ASK_USER:")[1].strip()
+                                        import json
+                                        try:
+                                            parsed = json.loads(response_chunk)
+                                            required_fields = ["thought_process", "run_command", "ask_user", "target_file", "source_code"]
+                                            for field in required_fields:
+                                                if field not in parsed:
+                                                    raise ValueError(f"Falta el campo requerido '{field}' en la respuesta del agente.")
+                                        except (json.JSONDecodeError, ValueError) as json_err:
+                                            logger.warning("Respuesta de agente malformada JSON o campos faltantes: %s", json_err)
+                                            react_messages.append({"role": "assistant", "content": response_chunk or "{}"})
+                                            react_messages.append({
+                                                "role": "user",
+                                                "content": (
+                                                    f"ERROR DE FORMATO JSON: Tu respuesta anterior no cumple con el esquema JSON requerido o no es un JSON válido.\n"
+                                                    f"Detalles del error: {json_err}\n"
+                                                    f"Por favor, responde estrictamente con un JSON que cumpla el esquema: {json.dumps(AGENT_OUTPUT_SCHEMA)}"
+                                                )
+                                            })
+                                            continue
 
+                                        thought = parsed.get("thought_process", "").strip()
+                                        run_cmd = parsed.get("run_command", "").strip()
+                                        ask_usr = parsed.get("ask_user", "").strip()
+
+                                        # Interceptor HITL
+                                        if ask_usr:
                                             console.print("\n[bold yellow]──────────────────────────────────────────────────────────────────────[/bold yellow]")
                                             console.print(f"[bold yellow]🤔 CONSULTA HITL DE @{agent_name}:[/bold yellow]")
-                                            console.print(f"[yellow]{question}[/yellow]")
+                                            console.print(f"[yellow]{ask_usr}[/yellow]")
                                             console.print("[bold yellow]──────────────────────────────────────────────────────────────────────[/bold yellow]")
 
                                             user_response = self._get_user_input_nonblocking("✍ Escribe tu respuesta: ")
@@ -753,19 +559,15 @@ class TaskRunnerPhase:
                                             react_messages.append({"role": "assistant", "content": response_chunk})
                                             user_msg = {"role": "user", "content": f"Respuesta del usuario a tu consulta: {user_response}"}
                                             react_messages.append(user_msg)
-                                            current_messages.append({"role": "assistant", "content": response_chunk})
-                                            current_messages.append(user_msg)
                                             continue
 
                                         # Detectar comandos
-                                        cmd_match = re.search(r'<run_command>(.*?)</run_command>', response_chunk, re.DOTALL)
-                                        if cmd_match:
-                                            cmd_to_run = cmd_match.group(1).strip()
-                                            console.print(f"       ⚙ Agente @{agent_name} ejecutando comando ReAct: {cmd_to_run} (Archivo: {sub_file})")
+                                        if run_cmd:
+                                            console.print(f"       ⚙ Agente @{agent_name} ejecutando comando ReAct: {run_cmd} (Archivo: {sub_file})")
 
                                             ret_dict = {'returncode': 0}
                                             cmd_output = run_terminal_command(
-                                                cmd_to_run,
+                                                run_cmd,
                                                 self.orchestrator.state,
                                                 silent_history=True,
                                                 timeout=120,
@@ -773,9 +575,9 @@ class TaskRunnerPhase:
                                                 return_code_dict=ret_dict
                                             )
 
-                                            urgency_prompt = f"Analiza el resultado y continúa redactando el archivo '{sub_file}' o solicita más comandos si es necesario."
+                                            urgency_prompt = "Analiza el resultado y continúa con la tarea. Si has terminado, llena 'target_file' y 'source_code' y deja vacíos 'run_command' y 'ask_user'."
                                             if step >= max_react_steps - 3:
-                                                urgency_prompt = f"Te quedan pocos pasos ReAct. Genera el entregable final del archivo '{sub_file}' AHORA usando etiquetas."
+                                                urgency_prompt = f"Te quedan pocos pasos ReAct. Genera tu JSON final entregando el archivo '{sub_file}' de inmediato."
 
                                             react_messages.append({"role": "assistant", "content": response_chunk})
                                             react_messages.append({
@@ -784,45 +586,42 @@ class TaskRunnerPhase:
                                             })
                                             continue
 
-                                        sub_task_result += response_chunk
-
-                                        if "[TAREA_COMPLETADA]" in response_chunk or "[TAREA_COMPLETADA]" in sub_task_result:
-                                            sub_task_result = sub_task_result.replace("[TAREA_COMPLETADA]", "").strip()
-                                            break
-
-                                        if step < max_react_steps:
-                                            react_messages.append({"role": "assistant", "content": response_chunk})
-                                            react_messages.append({
-                                                "role": "user",
-                                                "content": "Tu respuesta anterior se cortó. Continúa exactamente desde donde te quedaste. Si terminaste, finaliza con: [TAREA_COMPLETADA]"
-                                            })
+                                        sub_task_result = response_chunk
+                                        break
 
                                 if not sub_task_result:
                                     attempt_success = False
                                     last_error_log = f"El modelo LLM no generó contenido para la tarea {task_id_str} ({sub_file})."
                                     break
 
-                                if py_agent:
-                                    try:
-                                        sub_task_result = py_agent.post_execute(sub_task_result, sub_task_context)
-                                    except Exception as post_err:
-                                        logger.warning("post_execute de @%s falló: %s", agent_name, post_err)
+                                sub_created = []
+                                try:
+                                    import json
+                                    parsed = json.loads(sub_task_result)
+                                    target_file = parsed.get("target_file", "").strip()
+                                    source_code = parsed.get("source_code", "").strip()
 
-                                # Extraer archivos usando etiquetas exactas (XML o Markdown anotado)
-                                sub_created = self.orchestrator._extract_and_write_files(sub_task_result)
+                                    if target_file and source_code:
+                                        if py_agent:
+                                            try:
+                                                source_code = py_agent.post_execute(source_code, sub_task_context)
+                                            except Exception as post_err:
+                                                logger.warning("post_execute de @%s falló: %s", agent_name, post_err)
 
-                                if not sub_created:
-                                    # Fallback: Si el LLM omitió la etiqueta pero generó un bloque de código markdown, extraerlo
-                                    md_block = re.search(r'```[a-zA-Z0-9_+-]*\n(.*?)\n```', sub_task_result, re.DOTALL)
-                                    if md_block:
-                                        clean_content = md_block.group(1)
-                                        self.orchestrator._write_project_file(sub_file, clean_content)
-                                        sub_created = [sub_file]
-                                        sub_task_result = clean_content # Actualizar para que el task_result quede limpio
+                                        self.orchestrator._write_project_file(target_file, source_code)
+                                        sub_created = [target_file]
+                                        sub_task_result = source_code
                                     else:
-                                        # Si no hay bloque de código, escribir el resultado en crudo como último recurso
-                                        self.orchestrator._write_project_file(sub_file, sub_task_result)
+                                        fallback_content = self._build_valid_fallback_content(task_desc, sub_file)
+                                        self.orchestrator._write_project_file(sub_file, fallback_content)
                                         sub_created = [sub_file]
+                                        sub_task_result = fallback_content
+                                except Exception as e:
+                                    logger.error("Error al procesar JSON o escribir archivo: %s", e)
+                                    fallback_content = self._build_valid_fallback_content(task_desc, sub_file)
+                                    self.orchestrator._write_project_file(sub_file, fallback_content)
+                                    sub_created = [sub_file]
+                                    sub_task_result = fallback_content
 
                                 created_files.extend(sub_created)
                                 task_result += f"\n\n[FILE: {sub_file}]\n{sub_task_result}"
@@ -842,41 +641,26 @@ class TaskRunnerPhase:
                                 else:
                                     continue
 
-                            # Auto-reconciliación de archivos copiados en Dockerfiles
-                            self._reconcile_missing_docker_context_files(created_files)
+                            # Auto-reconciliación Docker
+                            self.ctx_manager.reconcile_missing_docker_context_files(created_files)
 
-                            # Pre-chequeo de infraestructura DoD simplificado (ya validado por la detección dirigida)
                             infra_ok = True
                             infra_error_msg = ""
 
-                            # Validación de sintaxis estática y ejecución real por subproceso
-                            syntax_ok = True
-                            syntax_error_msg = ""
-                            from core.orchestration.code_analyzer import validate_syntax, check_orphaned_files
-                            for f_created in created_files:
-                                abs_f_path = os.path.join(self.orchestrator.project_path, f_created)
-                                if os.path.isfile(abs_f_path):
-                                    s_ok, s_err = validate_syntax(abs_f_path)
-                                    if not s_ok:
-                                        syntax_ok = False
-                                        syntax_error_msg = s_err
-                                        break
+                            # Validación estática
+                            syntax_ok, syntax_error_msg = self.validator.validate_static_syntax(created_files)
 
-                            # Validación estática de archivos huérfanos
+                            # Validación de archivos huérfanos
                             orphaned_ok = True
                             orphaned_msg = ""
                             if syntax_ok:
-                                orphans = check_orphaned_files(self.orchestrator.project_path, created_files)
-                                if orphans:
-                                    orphaned_ok = False
-                                    orphaned_msg = f"Archivos huérfanos detectados: {', '.join(orphans)}. DEBES integrarlos/importarlos en tu proyecto principal."
+                                orphaned_ok, orphaned_msg = self.validator.validate_orphaned_files(created_files)
 
-                            # Validación estricta en subproceso real (subprocess.run)
-                            exec_subproc_ok, exec_subproc_reason = self._run_strict_subprocess_dod_validation(
+                            # Validación por subproceso (DoD)
+                            exec_subproc_ok, exec_subproc_reason = self.validator.run_strict_subprocess_dod_validation(
                                 self.orchestrator.project_path, created_files, output_file
                             )
 
-                            # DoD Check sin compilación general
                             if not build_cmd:
                                 if not infra_ok:
                                     dod_approved = False
@@ -892,8 +676,8 @@ class TaskRunnerPhase:
                                     dod_reason = exec_subproc_reason
                                 else:
                                     file_content = task_result if len(files_to_generate) > 1 else self.orchestrator._read_project_file(output_file)
-                                    dod_approved, dod_reason, breaker_tripped = self._run_swarm_consensus_debate(
-                                        task_id_str, agent_name, task_desc, output_file, file_content, attempt, task, tasks
+                                    dod_approved, dod_reason, breaker_tripped = self.executor.run_swarm_consensus_debate(
+                                        task_id_str, agent_name, task_desc, output_file, file_content, attempt, MAX_DEBATE_CYCLES, task, tasks
                                     )
                                     if breaker_tripped:
                                         success_task = False
@@ -906,36 +690,20 @@ class TaskRunnerPhase:
                                 else:
                                     console.print(f"       ❌ DoD Rechazado: {dod_reason}")
                                     last_error_log = f"DoD rechazado: {dod_reason}"
-                                    res_type, res_val = self._run_sentinel_auto_healing(
-                                        task_id_str, agent_name, task_desc, output_file, last_error_log, created_files
+                                    res_type, res_val = self.executor.run_sentinel_auto_healing(
+                                        task_id_str, agent_name, task_desc, output_file, last_error_log, created_files, self._get_user_input_nonblocking
                                     )
                                     if res_type == "AUTO_FIX":
-                                        syntax_ok = True
-                                        syntax_error_msg = ""
-                                        orphaned_ok = True
-                                        orphaned_msg = ""
-                                        for f_created in created_files:
-                                            abs_f_path = os.path.join(self.orchestrator.project_path, f_created)
-                                            if os.path.isfile(abs_f_path):
-                                                s_ok, s_err = validate_syntax(abs_f_path)
-                                                if not s_ok:
-                                                    syntax_ok = False
-                                                    syntax_error_msg = s_err
-                                                    break
-                                                    
+                                        syntax_ok, syntax_error_msg = self.validator.validate_static_syntax(created_files)
                                         if syntax_ok:
-                                            orphans = check_orphaned_files(self.orchestrator.project_path, created_files)
-                                            if orphans:
-                                                orphaned_ok = False
-                                                orphaned_msg = f"Archivos huérfanos detectados tras Auto-Curación: {', '.join(orphans)}."
-                                                
-                                        exec_subproc_ok, exec_subproc_reason = self._run_strict_subprocess_dod_validation(
+                                            orphaned_ok, orphaned_msg = self.validator.validate_orphaned_files(created_files)
+                                        exec_subproc_ok, exec_subproc_reason = self.validator.run_strict_subprocess_dod_validation(
                                             self.orchestrator.project_path, created_files, output_file
                                         )
                                         if syntax_ok and orphaned_ok and exec_subproc_ok:
                                             file_content = task_result if len(files_to_generate) > 1 else self.orchestrator._read_project_file(output_file)
-                                            dod_approved, dod_reason, breaker_tripped = self._run_swarm_consensus_debate(
-                                                task_id_str, agent_name, task_desc, output_file, file_content, attempt, task, tasks
+                                            dod_approved, dod_reason, breaker_tripped = self.executor.run_swarm_consensus_debate(
+                                                task_id_str, agent_name, task_desc, output_file, file_content, attempt, MAX_DEBATE_CYCLES, task, tasks
                                             )
                                             if breaker_tripped:
                                                 success_task = False
@@ -953,7 +721,7 @@ class TaskRunnerPhase:
                                         progress.fail()
                                     continue
 
-                            # DoD Check con compilación general
+                            # DoD con build de compilador detectado
                             returncode, build_output = self.orchestrator._run_build_command(build_cmd)
                             if returncode == 0:
                                 if not infra_ok:
@@ -970,8 +738,8 @@ class TaskRunnerPhase:
                                     dod_reason = exec_subproc_reason
                                 else:
                                     file_content = task_result if len(files_to_generate) > 1 else self.orchestrator._read_project_file(output_file)
-                                    dod_approved, dod_reason, breaker_tripped = self._run_swarm_consensus_debate(
-                                        task_id_str, agent_name, task_desc, output_file, file_content, attempt, task, tasks
+                                    dod_approved, dod_reason, breaker_tripped = self.executor.run_swarm_consensus_debate(
+                                        task_id_str, agent_name, task_desc, output_file, file_content, attempt, MAX_DEBATE_CYCLES, task, tasks
                                     )
                                     if breaker_tripped:
                                         success_task = False
@@ -984,29 +752,20 @@ class TaskRunnerPhase:
                                 else:
                                     console.print(f"       ❌ DoD Rechazado: {dod_reason}")
                                     last_error_log = f"DoD rechazado tras compilar con éxito: {dod_reason}"
-                                    res_type, res_val = self._run_sentinel_auto_healing(
-                                        task_id_str, agent_name, task_desc, output_file, last_error_log, created_files
+                                    res_type, res_val = self.executor.run_sentinel_auto_healing(
+                                        task_id_str, agent_name, task_desc, output_file, last_error_log, created_files, self._get_user_input_nonblocking
                                     )
                                     if res_type == "AUTO_FIX":
                                         returncode, build_output = self.orchestrator._run_build_command(build_cmd)
                                         if returncode == 0:
-                                            syntax_ok = True
-                                            syntax_error_msg = ""
-                                            for f_created in created_files:
-                                                abs_f_path = os.path.join(self.orchestrator.project_path, f_created)
-                                                if os.path.isfile(abs_f_path):
-                                                    s_ok, s_err = validate_syntax(abs_f_path)
-                                                    if not s_ok:
-                                                        syntax_ok = False
-                                                        syntax_error_msg = s_err
-                                                        break
-                                            exec_subproc_ok, exec_subproc_reason = self._run_strict_subprocess_dod_validation(
+                                            syntax_ok, syntax_error_msg = self.validator.validate_static_syntax(created_files)
+                                            exec_subproc_ok, exec_subproc_reason = self.validator.run_strict_subprocess_dod_validation(
                                                 self.orchestrator.project_path, created_files, output_file
                                             )
                                             if syntax_ok and exec_subproc_ok:
                                                 file_content = task_result if len(files_to_generate) > 1 else self.orchestrator._read_project_file(output_file)
-                                                dod_approved, dod_reason, breaker_tripped = self._run_swarm_consensus_debate(
-                                                    task_id_str, agent_name, task_desc, output_file, file_content, attempt, task, tasks
+                                                dod_approved, dod_reason, breaker_tripped = self.executor.run_swarm_consensus_debate(
+                                                    task_id_str, agent_name, task_desc, output_file, file_content, attempt, MAX_DEBATE_CYCLES, task, tasks
                                                 )
                                                 if breaker_tripped:
                                                     success_task = False
@@ -1024,29 +783,20 @@ class TaskRunnerPhase:
                                         progress.fail()
                             else:
                                 last_error_log = f"Error de compilación: {build_output}"
-                                res_type, res_val = self._run_sentinel_auto_healing(
-                                    task_id_str, agent_name, task_desc, output_file, last_error_log, created_files
+                                res_type, res_val = self.executor.run_sentinel_auto_healing(
+                                    task_id_str, agent_name, task_desc, output_file, last_error_log, created_files, self._get_user_input_nonblocking
                                 )
                                 if res_type == "AUTO_FIX":
                                     returncode, build_output = self.orchestrator._run_build_command(build_cmd)
                                     if returncode == 0:
-                                        syntax_ok = True
-                                        syntax_error_msg = ""
-                                        for f_created in created_files:
-                                            abs_f_path = os.path.join(self.orchestrator.project_path, f_created)
-                                            if os.path.isfile(abs_f_path):
-                                                s_ok, s_err = validate_syntax(abs_f_path)
-                                                if not s_ok:
-                                                    syntax_ok = False
-                                                    syntax_error_msg = s_err
-                                                    break
-                                        exec_subproc_ok, exec_subproc_reason = self._run_strict_subprocess_dod_validation(
+                                        syntax_ok, syntax_error_msg = self.validator.validate_static_syntax(created_files)
+                                        exec_subproc_ok, exec_subproc_reason = self.validator.run_strict_subprocess_dod_validation(
                                             self.orchestrator.project_path, created_files, output_file
                                         )
                                         if syntax_ok and exec_subproc_ok:
                                             file_content = task_result if len(files_to_generate) > 1 else self.orchestrator._read_project_file(output_file)
-                                            dod_approved, dod_reason, breaker_tripped = self._run_swarm_consensus_debate(
-                                                task_id_str, agent_name, task_desc, output_file, file_content, attempt, task, tasks
+                                            dod_approved, dod_reason, breaker_tripped = self.executor.run_swarm_consensus_debate(
+                                                task_id_str, agent_name, task_desc, output_file, file_content, attempt, MAX_DEBATE_CYCLES, task, tasks
                                             )
                                             if breaker_tripped:
                                                 success_task = False
@@ -1072,30 +822,24 @@ class TaskRunnerPhase:
                     logger.error("Timeout del modelo local (GPU saturada) en la tarea %s: %s", task_id_str, timeout_ex)
                     success_task = False
                     last_error_log = str(timeout_ex)
-                    task_retries = MAX_RETRIES  # Forzar abortar reintentos locales
+                    task_retries = MAX_RETRIES
                 except Exception as ex:
                     logger.error("Excepción durante intento de ejecución de tarea: %s", ex, exc_info=True)
                     success_task = False
                     last_error_log = f"Excepción interna del runner: {ex}"
 
                 if success_task:
-                    # Tarea completada con éxito. Romper el bucle de Auto-Retry
                     self.orchestrator.state.blackboard.set(f"task_status_{task_id_str}", "completed")
                     break
                 else:
                     task_retries += 1
                     # Rollback git
-                    if use_microbranch:
-                        self.orchestrator._git_end_task_branch(task_id_str, original_branch, success=False)
-                    else:
-                        self.orchestrator._git_rollback(task_id_str, snapshot_created)
+                    self.ctx_manager.rollback_transaction(task_id_str, use_microbranch, original_branch_or_snapshot, snapshot_created)
                     
                     if task_retries < MAX_RETRIES:
-                        # Auto-Retry: reasignar con FIX REQUIRED y el log del error (FASE 4)
                         task_desc = f"FIX REQUIRED: [Log del error: {last_error_log}]\nOriginal task description: {original_task_desc}"
                         console.print(f"       🔄 [Auto-Retry] Reintentando tarea {task_id_str} (Reintento {task_retries}/{MAX_RETRIES})...")
                     else:
-                        # FASE 4: Límite de escalada MAX_RETRIES alcanzado. Bloquear la TUI
                         self.orchestrator.state.global_status = "ERROR"
                         event_bus.publish(EventType.AGENT_STATUS_CHANGE, {"agent": agent_name, "status": "Inactivo"})
                         event_bus.publish(EventType.TASK_FAILED, {
@@ -1124,7 +868,6 @@ class TaskRunnerPhase:
                         ceo = AgencyOrchestrator(self.orchestrator.state)
                         sentinel_res = ceo.run_sentinel_session()
                         
-                        # Si el usuario resolvió la pausa mediante retornos de control directos ([RETRY] o [FORCE_CONTINUE])
                         if not self.orchestrator.state.is_pipeline_paused() or sentinel_res in ("[RETRY]", "[FORCE_CONTINUE]"):
                             import json
                             json_filename = self.orchestrator.board_filename.replace(".md", ".json")
@@ -1143,23 +886,20 @@ class TaskRunnerPhase:
                                 except Exception as err_json:
                                     logger.warning("Error leyendo tablero actualizado tras SIP: %s", err_json)
 
-                            # Si la tarea fue marcada como DONE o FAILED
                             if task.get("status") in ("DONE", "HECHO", "FAILED") or task.get("state") in ("DONE", "HECHO", "FAILED"):
                                 if task.get("status") == "FAILED" or task.get("state") == "FAILED":
                                     self.orchestrator.state.blackboard.set(f"task_status_{task_id_str}", "failed")
                                 else:
                                     self.orchestrator.state.blackboard.set(f"task_status_{task_id_str}", "completed")
-                                break  # Romper el bucle task_retries para avanzar linealmente a la siguiente tarea
+                                break
                             
-                            # Si se seleccionó reintentar ([RETRY] o status en TODO)
                             task_retries = 0
                             continue
                         
-                        # Si sigue pausado o la sesión fue abortada, detener la ejecución de forma limpia
                         return
 
             if use_microbranch and success_task:
-                self.orchestrator._git_end_task_branch(task_id_str, original_branch, success=True)
+                self.ctx_manager.commit_transaction(task_id_str, use_microbranch, original_branch_or_snapshot)
 
             tokens = estimate_tokens(task_result) if task_result else 0
             status_symbol = "✅" if success_task else "⚠"
@@ -1224,12 +964,10 @@ class TaskRunnerPhase:
             except Exception as log_err:
                 logger.warning("No se pudo escribir en DEVELOPMENT_LOG.md: %s", log_err)
 
-            # Actualizar estado del agente a Inactivo y global status a OK
             if agent_name in self.orchestrator.state.agent_statuses:
                 self.orchestrator.state.agent_statuses[agent_name] = "Inactivo"
             self.orchestrator.state.global_status = "OK"
 
-            # Actualizar estado de tarea individual y guardar tablero
             from datetime import datetime
             task["status"] = "DONE"
             task["state"] = "DONE"

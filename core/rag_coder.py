@@ -649,3 +649,73 @@ class CodeKnowledgeBase:
         if self.is_active:
             return f"RAG[{self.indexed_chunk_count}]"
         return "RAG[OFF]"
+
+
+def build_dynamic_rag_context(project_path: str, task_desc: str, output_file: str) -> str:
+    """Orquestador principal del contexto dinámico (RAG).
+
+    Consulta la base vectorial y lee del disco los archivos de diseño, esquemas o reglas
+    que sean estrictamente relevantes para la tarea en curso.
+    """
+    parts = []
+    total_chars = 0
+    MAX_CONTEXT = 30000
+
+    # 1. Recuperar fragmentos de código relevantes de la base vectorial (RAG)
+    from core.state import DB_PATH
+    try:
+        rag = CodeKnowledgeBase(db_path=DB_PATH, active_project=project_path)
+        rag.enabled = True
+        rag_context = rag.query_code(task_desc, k=4)
+        if rag_context:
+            truncated = rag_context[:8000]
+            parts.append(f"### [CONTEXTO RELEVANTE RAG]\n{truncated}\n")
+            total_chars += len(truncated)
+    except Exception as e:
+        logger.debug("Error consultando base RAG: %s", e)
+
+    # 2. Consultar persistencia en disco para documentos técnicos y de diseño
+    tech_docs = [
+        "DESIGN_TOKENS.md",
+        "DATA_SCHEMA.md",
+        "SECURITY.md",
+        "COMPONENT_INDEX.md",
+        "DEVELOPMENT_LOG.md",
+        "DEPENDENCY_MANIFEST.md",
+        "PLAYBOOK.md",
+        "BUSINESS_CONTEXT.md",
+        "PROJECT_TREE.md"
+    ]
+    
+    task_desc_lower = task_desc.lower()
+    
+    for doc_name in tech_docs:
+        if total_chars >= MAX_CONTEXT:
+            break
+        
+        doc_path = os.path.join(project_path, doc_name)
+        if os.path.isfile(doc_path):
+            # Determinar relevancia
+            # DEVELOPMENT_LOG, DATA_SCHEMA y DESIGN_TOKENS son siempre relevantes.
+            # El resto son relevantes si hay palabras clave.
+            is_relevant = True
+            doc_name_lower = doc_name.lower()
+            if doc_name not in ["DATA_SCHEMA.md", "DESIGN_TOKENS.md", "DEVELOPMENT_LOG.md"]:
+                keywords = doc_name_lower.replace(".md", "").replace("_", " ").split()
+                is_relevant = any(kw in task_desc_lower for kw in keywords)
+                
+            if is_relevant:
+                try:
+                    with open(doc_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    if content:
+                        if doc_name == "DEVELOPMENT_LOG.md":
+                            truncated = content[-6000:]
+                        else:
+                            truncated = content[:4000]
+                        parts.append(f"--- {doc_name} ---\n{truncated}\n")
+                        total_chars += len(truncated)
+                except Exception as doc_err:
+                    logger.warning("Error leyendo documento %s: %s", doc_name, doc_err)
+
+    return "\n".join(parts)

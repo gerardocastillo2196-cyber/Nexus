@@ -370,6 +370,25 @@ def _project_create(raw_path: str, state, rag, display_header_func, methodology:
     from datetime import datetime
     project_path = os.path.abspath(os.path.expanduser(raw_path))
 
+    # Determinar si el proyecto se esta creando desde cero (antes de crear carpetas o archivos)
+    is_new = not os.path.exists(project_path)
+    if os.path.isdir(project_path):
+        entries = os.listdir(project_path)
+        if len(entries) == 0:
+            is_new = True
+        else:
+            jellyfish_files = {
+                "backlog.md", "development_log.md", "sprint_board.md", "project_tree.md",
+                "scrum_methodology.md", "daily.md", "playbook.md", "architecture.md",
+                "business_context.md", "component_index.md", "data_schema.md",
+                "dependency_manifest.md", "design_tokens.md", "security.md",
+                "backlog.json", "sprint_board.json", "intent_map.json", "env_capabilities.json",
+                ".jellyfish_project_config.json", ".jellyfish_history.json", ".jellyfish.lock",
+                ".jellyfish_circuit_breaker", ".jellyfish_last_exit_code",
+                "jellyfish.log", "jellyfish_debug.log"
+            }
+            is_new = all(e.lower() in jellyfish_files or e.startswith(".") for e in entries)
+
     if not os.path.exists(project_path):
         if Confirm.ask(f"El directorio {project_path} no existe. ¿Crearlo?"):
             try:
@@ -427,6 +446,22 @@ def _project_create(raw_path: str, state, rag, display_header_func, methodology:
         console.print(f"[dim]Los archivos de {methodology_label} ya existían, no se sobreescribieron.[/dim]")
 
     state.save_config(active_project=project_path, project_methodology=methodology)
+    
+    # Escribir el flag en .jellyfish_project_config.json
+    config_path = os.path.join(project_path, ".jellyfish_project_config.json")
+    try:
+        import json
+        config_data = {}
+        if os.path.isfile(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+        if "is_new_project" not in config_data:
+            config_data["is_new_project"] = is_new
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(config_data, f, indent=4)
+    except Exception as e:
+        logger.error("Error guardando is_new_project en config: %s", e)
+
     console.print(f"✓ Proyecto activo: {project_path} ({methodology_label})")
 
 

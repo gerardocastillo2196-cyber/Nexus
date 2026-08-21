@@ -46,7 +46,13 @@ def test_sentinel_auto_healing_autofix(tmp_path):
         
         # Primera llamada: El desarrollador genera un main.py erróneo
         if agent_name == "developer":
-            return "[WRITE_FILE: main.py]\n```python\n# Codigo con error\nprint('Hello world'\n```\n[TAREA_COMPLETADA]"
+            return json.dumps({
+                "thought_process": "Generando main.py con error",
+                "run_command": "",
+                "ask_user": "",
+                "target_file": "main.py",
+                "source_code": "# Codigo con error\nprint('Hello world'"
+            })
             
         # Segunda llamada: Sentinel Healer entra en acción
         if agent_name == "sentinel":

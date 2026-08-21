@@ -1083,3 +1083,47 @@ Para asegurar un proceso de desarrollo más robusto, transparente y realista, se
 6.  **[DIRECTRIZ] Gestionar y Comunicar Dependencias:**
     *   **NO** trabajes en aislamiento si tu tarea depende de otra.
     *   **SÍ** comunica explícitamente las dependencias con otros agentes y coordina el trabajo para evitar bloqueos. Por ejemplo, "Esperando la API de `@backend_dev` para `US-003`".
+
+---
+
+## Retrospectiva 2026-08-14 14:26
+
+# Reporte de Lecciones Aprendidas del Sprint - Jellyfish OS
+
+**Fecha del Reporte:** 2026-08-14 (Post-Sprint Daily)
+**Scrum Master:** [Tu Nombre/ID]
+
+---
+
+## 1. Qué falló durante el sprint
+
+El sprint registrado en `DAILY.md` muestra una ejecución excepcionalmente fluida. Todas las tareas fueron marcadas como "Completado con éxito" y el Scrum Master no reportó impedimentos iniciales. No se registraron fallos explícitos como errores de compilación, problemas de auto-healing o conflictos de dependencias.
+
+Sin embargo, la ausencia total de cualquier tipo de "fallo" o "impedimento" en el registro, incluso menor, puede indicar una falta de granularidad en el reporte de los agentes. En un sprint real, es común encontrar pequeños desafíos, decisiones de diseño alternativas o ajustes que, aunque no detienen el progreso, son valiosas lecciones aprendidas. La bitácora actual no captura estos matices, lo que limita la capacidad de aprender y optimizar procesos futuros.
+
+**Áreas de mejora identificadas (basadas en la ausencia de detalle):**
+
+*   **Falta de registro de desafíos menores:** No se documentaron los pequeños obstáculos o decisiones de diseño que seguramente surgieron durante el desarrollo.
+*   **Integración y pruebas al final del ciclo:** Aunque exitosas, la compilación y las pruebas de QA se realizaron al final del sprint. Si hubieran surgido problemas, se habrían detectado tarde.
+*   **Colaboración inter-rol en archivos compartidos:** Se observó que un `@backend_dev` modificó un archivo (`mainwindow.cpp`) que es típicamente responsabilidad de un `@frontend_dev`. Aunque en este caso fue exitoso, sin una comunicación explícita, esto podría generar conflictos en el futuro.
+
+---
+
+## 2. Reglas Recomendadas para Futuros Agentes
+
+Para fomentar un aprendizaje continuo y una mayor resiliencia en futuros sprints, se establecen las siguientes directrices:
+
+### 2.1. Fomentar el Reporte Detallado de Desafíos y Decisiones
+
+*   **Negative Prompt:** "NO omitir la descripción de pequeños desafíos, decisiones de diseño alternativas o ajustes realizados durante la tarea, incluso si la tarea se completó con éxito."
+*   **Directriz:** "Los agentes deben documentar brevemente cualquier obstáculo encontrado, la solución aplicada y las decisiones clave tomadas durante la ejecución de una tarea. Esto incluye, por ejemplo, la elección de una librería sobre otra, un enfoque de implementación descartado, o un bug menor que fue resuelto rápidamente. Estos detalles son cruciales para el aprendizaje colectivo y la mejora de procesos."
+
+### 2.2. Promover la Integración Continua y Pruebas Tempranas
+
+*   **Negative Prompt:** "NO esperar al final del ciclo de desarrollo para realizar la primera compilación y ejecución completa del proyecto."
+*   **Directriz:** "Integrar y probar el código de forma incremental y frecuente. Los agentes DevOps deben establecer mecanismos de CI/CD que permitan validar la compilación y el funcionamiento básico tan pronto como sea posible tras la finalización de tareas clave. Los desarrolladores deben realizar pruebas unitarias y de integración localmente antes de considerar una tarea 'completada'."
+
+### 2.3. Clarificar la Colaboración en Archivos Compartidos
+
+*   **Negative Prompt:** "NO modificar archivos que son responsabilidad principal de otro rol sin una comunicación explícita y un acuerdo previo."
+*   **Directriz:** "Cuando una tarea requiera modificar archivos gestionados principalmente por otro rol (ej. `@backend_dev` modificando `mainwindow.cpp`), el agente debe comunicarlo proactivamente al rol propietario del archivo para asegurar la coordinación, discutir el enfoque y prevenir posibles conflictos de merge o regresiones."

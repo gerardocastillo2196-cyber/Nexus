@@ -356,11 +356,109 @@ def format_analysis_for_log(
     return "\n".join(parts)
 
 
+def _validate_dockerfile_syntax(content: str) -> tuple[bool, str]:
+    lines = [line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")]
+    if not lines:
+        return False, "Dockerfile vacio"
+    
+    yaml_indicators = ["version:", "services:", "image:", "build:", "volumes:"]
+    for idx, line in enumerate(content.splitlines()):
+        line_strip = line.strip()
+        for indicator in yaml_indicators:
+            if line_strip.startswith(indicator):
+                return False, f"Linea {idx+1}: Se detecto sintaxis de docker-compose ('{indicator}') dentro de un Dockerfile. Un Dockerfile debe usar instrucciones como FROM, RUN, COPY, WORKDIR, etc."
+    
+    valid_cmds = {"from", "run", "cmd", "label", "maintainer", "expose", "env", "add", "copy", "entrypoint", "volume", "user", "workdir", "arg", "onbuild", "stopsignal", "healthcheck", "shell"}
+    
+    first_line_parts = lines[0].split()
+    if first_line_parts:
+        cmd = first_line_parts[0].lower()
+        if cmd not in valid_cmds:
+            return False, f"Instruccion inicial invalida o desconocida en Dockerfile: '{cmd}'. La primera instruccion debe ser 'FROM' (o 'ARG')."
+            
+    for idx, line in enumerate(content.splitlines()):
+        line_strip = line.strip()
+        if not line_strip or line_strip.startswith("#"):
+            continue
+        parts = line_strip.split()
+        if parts:
+            cmd = parts[0].lower()
+            if cmd.endswith(":"):
+                return False, f"Linea {idx+1}: Se detecto una clave estilo YAML ('{cmd}'), lo cual es invalido en un Dockerfile."
+            # No validar continuaciones de lineas
+            if idx > 0 and content.splitlines()[idx-1].strip().endswith("\\"):
+                continue
+            if cmd not in valid_cmds and not cmd.startswith("/") and not cmd.startswith("."):
+                if cmd.isalpha() and cmd.islower():
+                    return False, f"Linea {idx+1}: Instruccion de Dockerfile desconocida: '{cmd}'"
+                    
+    return True, "OK"
+
+
+def _validate_yaml_syntax(content: str) -> tuple[bool, str]:
+    dockerfile_cmds = {"from", "run", "cmd", "copy", "add", "workdir", "entrypoint"}
+
+    try:
+        import yaml
+        try:
+            data = yaml.safe_load(content)
+            if not isinstance(data, (dict, list)):
+                return False, "El archivo YAML no tiene una estructura de diccionario o lista valida."
+            
+            if isinstance(data, dict):
+                for key in data.keys():
+                    if str(key).lower() in dockerfile_cmds:
+                        return False, f"Se detecto la instruccion de Dockerfile '{key}' en la raiz del archivo YAML de orquestacion. No debes mezclar sintaxis de Dockerfile en docker-compose.yml."
+            return True, "OK"
+        except yaml.YAMLError as exc:
+            # Si fallo el parseo de YAML, verificar si tiene instrucciones de Dockerfile
+            for idx, line in enumerate(content.splitlines()):
+                line_strip = line.strip()
+                if not line_strip or line_strip.startswith("#"):
+                    continue
+                parts = line_strip.split()
+                if parts:
+                    cmd = parts[0].lower()
+                    if cmd in dockerfile_cmds:
+                        return False, f"Linea {idx+1}: Se detecto la instruccion de Dockerfile '{parts[0]}' en el archivo. No debes mezclar sintaxis de Dockerfile en docker-compose.yml."
+            return False, f"Error de sintaxis YAML: {exc}"
+    except ImportError:
+        for idx, line in enumerate(content.splitlines()):
+            line_strip = line.strip()
+            if not line_strip or line_strip.startswith("#"):
+                continue
+            parts = line_strip.split()
+            if parts:
+                cmd = parts[0].lower()
+                if cmd in dockerfile_cmds:
+                    return False, f"Linea {idx+1}: Se detecto la instruccion de Dockerfile '{parts[0]}' en el archivo. No debes mezclar sintaxis de Dockerfile en docker-compose.yml."
+        if "services:" not in content and "version:" not in content:
+            return False, "El archivo docker-compose.yml no contiene las claves requeridas ('services:' o 'version:')."
+        return True, "OK"
+
+
 def validate_syntax(filepath: str) -> tuple[bool, str]:
     """Valida la sintaxis del archivo de código de forma estática (FASE 4).
     
     Retorna (True, "OK") o (False, "Detalle del error de sintaxis").
     """
+    basename = os.path.basename(filepath).lower()
+    
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+    except Exception as e:
+        return False, f"No se pudo leer el archivo: {e}"
+        
+    if not basename.endswith(".md") and "```" in content:
+        return False, "Se detectaron delimitadores de bloque de código Markdown (```) en el archivo. El archivo debe contener únicamente código fuente puro."
+        
+    if "dockerfile" in basename:
+        return _validate_dockerfile_syntax(content)
+        
+    if basename.endswith((".yml", ".yaml")):
+        return _validate_yaml_syntax(content)
+
     analysis = analyze_file(filepath)
     if analysis.get("error"):
         return False, analysis["error"]

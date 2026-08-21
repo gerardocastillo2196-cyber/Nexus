@@ -226,28 +226,37 @@ class TestTokenBudget:
         total_chars = sum(len(m.get("content", "")) for m in history)
         assert total_chars <= 200 + 40  # margen por estático vacío
 
-    def test_recent_messages_preserved(self):
+    def test_latest_message_survives(self):
         from core.state import JellyfishState
-        state = JellyfishState()
-        state.static_history = []
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            state.context_files.clear()
+            state.static_history = []
 
-        # El último mensaje debe siempre preservarse
-        for i in range(5):
-            state.history.append({"role": "user", "content": "A" * 10})
-        state.history.append({"role": "user", "content": "ÚLTIMO"})
+            # El último mensaje debe siempre preservarse
+            for i in range(5):
+                state.history.append({"role": "user", "content": "A" * 10})
+            state.history.append({"role": "user", "content": "ÚLTIMO"})
 
-        history = state.get_full_history()
-        contents = [m["content"] for m in history]
-        assert "ÚLTIMO" in contents
+            history = state.get_full_history()
+            contents = [m["content"] for m in history]
+            assert "ÚLTIMO" in contents
 
     def test_latest_message_survives_large_static_context(self):
         from core.state import JellyfishState
-        state = JellyfishState()
-        state.static_history = [{"role": "system", "content": "S" * 500}]
-        state.history = [{"role": "user", "content": "pregunta final importante"}]
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            state.context_files.clear()
+            state.static_history = [{"role": "system", "content": "S" * 500}]
+            state.history.clear()
+            state.history.append({"role": "user", "content": "pregunta final importante"})
 
-        history = state.get_full_history()
-        assert history[-1]["content"].endswith("pregunta final importante")
+            history = state.get_full_history()
+            assert history[-1]["content"].endswith("pregunta final importante")
 
     def test_history_persistance_in_active_project(self):
         import tempfile
@@ -1924,6 +1933,8 @@ def test_static_context_budget_limit():
     from core.state import JellyfishState
     with tempfile.TemporaryDirectory() as temp_dir:
         state = JellyfishState()
+        state.context_files.clear()
+        state.system_prompt = "Short"
         state.active_project = temp_dir
         state.active_agent = "developer"
         

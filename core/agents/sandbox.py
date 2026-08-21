@@ -143,3 +143,65 @@ def run_in_sandbox(
                 os.unlink(tmp_path)
             except OSError:
                 pass
+
+
+# ─── MÉTODOS DE ABLACIÓN Y SEGURIDAD FASE 1 (v7.0) ───
+
+import re
+import shlex
+
+_BLOCK_PATTERNS = [
+    re.compile(r"\b(sudo|su|doas)\b", re.IGNORECASE),
+    re.compile(r">\s*/(?:root|etc|usr|boot|sys|proc|dev|home)\b", re.IGNORECASE),
+]
+
+def is_command_safe(cmd_str: str) -> tuple[bool, str]:
+    """Verifica si un comando intenta escalar privilegios o escribir en directorios del sistema host.
+    
+    Returns:
+        (True, "") si es seguro, (False, patrón) si es potencialmente peligroso.
+    """
+    for pattern in _BLOCK_PATTERNS:
+        if pattern.search(cmd_str):
+            return False, pattern.pattern
+    return True, ""
+
+def run_subprocess(cmd: list[str] | str, **kwargs) -> subprocess.CompletedProcess:
+    """Sustituto seguro para subprocess.run que valida privilegios antes de ejecutar en el host."""
+    cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+    
+    is_safe, matched_pattern = is_command_safe(cmd_str)
+    if not is_safe:
+        logger.error("COMANDO EN SUBPROCESO BLOQUEADO POR SEGURIDAD: %s (Patrón: %s)", cmd_str, matched_pattern)
+        return subprocess.CompletedProcess(
+            args=cmd,
+            returncode=-1,
+            stdout="",
+            stderr=f"🛑 INCIDENTE DE SEGURIDAD: Comando bloqueado por políticas de Sandbox en el subproceso del DoD. Patrón detectado: {matched_pattern}"
+        )
+        
+    return subprocess.run(cmd, **kwargs)
+
+def run_terminal_command(command_str: str, state, **kwargs) -> str:
+    """Envoltura de seguridad para run_terminal_command. Bloquea de inmediato comandos destructivos."""
+    is_safe, matched_pattern = is_command_safe(command_str)
+    if not is_safe:
+        msg = (
+            f"🛑 INCIDENTE DE SEGURIDAD: Comando destructivo detectado y bloqueado automáticamente por el sandbox.\n"
+            f"   Patrón de lista negra: {matched_pattern}\n"
+            f"   Comando: {command_str[:150]}"
+        )
+        logger.error("COMANDO DE TERMINAL BLOQUEADO EN SANDBOX: %s (Patrón: %s)", command_str, matched_pattern)
+        
+        # Registrar en denied_commands en el estado para evitar loops infinitos
+        if state is not None:
+            if not hasattr(state, "denied_commands"):
+                state.denied_commands = set()
+            state.denied_commands.add(command_str)
+            
+        return msg
+        
+    # Si pasa la seguridad del sandbox, delegar al ejecutor de terminal real
+    from core.terminal import run_terminal_command as real_run
+    return real_run(command_str, state, **kwargs)
+

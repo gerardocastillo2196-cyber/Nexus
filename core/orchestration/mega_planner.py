@@ -137,7 +137,7 @@ ESQUEMA JSON OBLIGATORIO (todos los campos son requeridos)
         "task": "[US-000] Crear Dockerfile, docker-compose.yml y punto de entrada principal",
         "agent": "devops_engineer",
         "estimacion": "S",
-        "output_file": "Dockerfile",
+        "output_file": "Dockerfile, docker-compose.yml",
         "dependencias": []
       }
     ]

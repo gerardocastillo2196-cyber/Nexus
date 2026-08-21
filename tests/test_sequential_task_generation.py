@@ -47,10 +47,22 @@ def test_sequential_generation_multiple_files(tmp_path):
             return "[APPROVED]\nConsenso alcanzado."
         elif "Genera el contenido completo de file1.py" in user_content:
             call_args_files.append("file1.py")
-            return "[WRITE_FILE: file1.py]\n```python\n# code file 1\n```\n[TAREA_COMPLETADA]"
+            return json.dumps({
+                "thought_process": "Generando file1.py",
+                "run_command": "",
+                "ask_user": "",
+                "target_file": "file1.py",
+                "source_code": "# code file 1"
+            })
         elif "Genera el contenido completo de file2.py" in user_content:
             call_args_files.append("file2.py")
-            return "[WRITE_FILE: file2.py]\n```python\n# code file 2\n```\n[TAREA_COMPLETADA]"
+            return json.dumps({
+                "thought_process": "Generando file2.py",
+                "run_command": "",
+                "ask_user": "",
+                "target_file": "file2.py",
+                "source_code": "# code file 2"
+            })
         return ""
         
     with patch("core.orchestration.task_runner._call_llm_silent", side_effect=mock_call_silent), \

@@ -6,6 +6,14 @@ from core.state import JellyfishState
 
 @pytest.fixture
 def mock_project_env():
+    # Limpiar estado persistido para evitar filtración de otros tests o de la BD del usuario
+    state = JellyfishState()
+    state.context_files.clear()
+    state.history.clear()
+    state.history_summary = ""
+    state.summarized_message_count = 0
+    state.active_project = ""
+    
     with tempfile.TemporaryDirectory() as tmpdir:
         files = {
             "SPRINT_BOARD.md": "# SPRINT BOARD\n- [ ] Tarea 1: Login API\n- [x] Tarea 2: Setup DB\n" * 5,

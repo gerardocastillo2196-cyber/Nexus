@@ -289,7 +289,7 @@ def _parse_ollama_line(line_bytes: bytes) -> str:
     return ""
 
 
-def _prepare_payload(provider_name: str, url: str, model_name: str, messages: list, attempt: int = 1, state = None, json_mode: bool = False, temperature: float | None = None) -> dict:
+def _prepare_payload(provider_name: str, url: str, model_name: str, messages: list, attempt: int = 1, state = None, json_mode: bool = False, temperature: float | None = None, json_schema: dict | None = None) -> dict:
     is_cloud = provider_name != "ollama"
     is_native_anthropic = (provider_name == "claude" and "api.anthropic.com" in url)
 
@@ -317,7 +317,26 @@ def _prepare_payload(provider_name: str, url: str, model_name: str, messages: li
         "model": model_name,
         "stream": True,
     }
-    if json_mode:
+    if json_schema:
+        if provider_name == "ollama":
+            payload["format"] = json_schema
+        elif provider_name in ("openai", "groq", "openrouter"):
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "agent_output",
+                    "strict": True,
+                    "schema": json_schema
+                }
+            }
+        elif provider_name == "gemini":
+            payload["generationConfig"] = {
+                "responseMimeType": "application/json",
+                "responseSchema": json_schema
+            }
+        else:
+            payload["response_format"] = {"type": "json_object"}
+    elif json_mode:
         if provider_name == "ollama":
             # DeepSeek-R1 y modelos de razonamiento fallan con format="json" 
             # porque no pueden emitir las etiquetas <think> iniciales.
@@ -517,6 +536,7 @@ def _call_llm_silent(
     timeout: float | None = None,
     json_mode: bool = False,
     temperature: float | None = None,
+    json_schema: dict | None = None,
 ) -> str | None:
     """Llama al LLM sin mostrar streaming en pantalla (para subagentes internos)."""
     if agent_name or not (provider and model):
@@ -536,7 +556,8 @@ def _call_llm_silent(
             return _call_llm_silent(
                 state, messages, provider="ollama",
                 model=fallback_model,
-                timeout=timeout, json_mode=json_mode, temperature=temperature
+                timeout=timeout, json_mode=json_mode, temperature=temperature,
+                json_schema=json_schema
             )
         except Exception as cooldown_err:
             logger.warning("Fallback directo a Ollama por cooldown falló: %s", cooldown_err)
@@ -563,7 +584,7 @@ def _call_llm_silent(
         actual_timeout = timeout
 
     for attempt in range(1, max_attempts + 1):
-        payload = _prepare_payload(provider_name, url, model_name, messages, attempt, state=state, json_mode=json_mode, temperature=temperature)
+        payload = _prepare_payload(provider_name, url, model_name, messages, attempt, state=state, json_mode=json_mode, temperature=temperature, json_schema=json_schema)
         try:
             full = ""
             parse_fn = (
@@ -628,7 +649,8 @@ def _call_llm_silent(
                             return _call_llm_silent(
                                 state, messages, provider="ollama",
                                 model=fallback_model,
-                                timeout=timeout, json_mode=json_mode, temperature=temperature
+                                timeout=timeout, json_mode=json_mode, temperature=temperature,
+                                json_schema=json_schema
                             )
                     break
                 else:
@@ -709,7 +731,8 @@ def _call_llm_silent(
                 model=fallback_model,
                 timeout=timeout,
                 json_mode=json_mode,
-                temperature=temperature
+                temperature=temperature,
+                json_schema=json_schema
             )
         except Exception as fallback_err:
             logger.warning("Fallback a Ollama falló en _call_llm_silent: %s", fallback_err)
@@ -726,6 +749,7 @@ async def get_ai_response_async(
     timeout: float | None = 900.0,
     json_mode: bool = False,
     temperature: float | None = None,
+    json_schema: dict | None = None,
 ) -> str | None:
     """Invocación LLM asíncrona no bloqueante (Swarm Architecture v6.9.15).
     
@@ -738,7 +762,7 @@ async def get_ai_response_async(
         model_name = model or state.model
 
     url, headers = _get_provider_config(state, provider_name)
-    payload = _prepare_payload(provider_name, url, model_name, messages, attempt=1, state=state, json_mode=json_mode, temperature=temperature)
+    payload = _prepare_payload(provider_name, url, model_name, messages, attempt=1, state=state, json_mode=json_mode, temperature=temperature, json_schema=json_schema)
     
     if "stream" in payload:
         payload["stream"] = False
@@ -768,7 +792,7 @@ async def get_ai_response_async(
         logger.error("Error en get_ai_response_async con %s (%s): %s", provider_name, model_name, e)
         if provider_name != "ollama":
             fallback_model = _get_fallback_ollama_model(state)
-            return await get_ai_response_async(state, messages, provider="ollama", model=fallback_model, timeout=timeout, json_mode=json_mode, temperature=temperature)
+            return await get_ai_response_async(state, messages, provider="ollama", model=fallback_model, timeout=timeout, json_mode=json_mode, temperature=temperature, json_schema=json_schema)
     return None
 
 

@@ -765,6 +765,10 @@ class ProjectOrchestrator:
                 return f"docker compose build {' '.join(services_to_build)}"
             return "docker compose config"
             
+        cmake_lists = os.path.join(self.project_path, "CMakeLists.txt")
+        if os.path.isfile(cmake_lists):
+            return "cmake -B build -S . && cmake --build build"
+            
         gradlew = os.path.join(self.project_path, "gradlew")
         if os.path.isfile(gradlew):
             return "./gradlew assembleDebug --no-daemon"
@@ -1508,85 +1512,9 @@ class ProjectOrchestrator:
         return True, "DoD aprobado por defecto."
 
     def _build_intelligent_context(self, task_desc: str, output_file: str) -> str:
-        """Construye un contexto inteligente para la tarea priorizando documentos técnicos reales."""
-        parts = []
-        total_chars = 0
-        MAX_CONTEXT = 30_000  # Budget de contexto por tarea
-
-        # 1. PRIORIDAD MÁXIMA: Documentos de inteligencia técnica (compactos y de alto valor)
-        intelligence_files = [
-            "DESIGN_TOKENS.md",       # Patrones de arquitectura
-            "DATA_SCHEMA.md",         # Modelos de datos reales
-            "SECURITY.md",            # Guardrails de seguridad
-            "COMPONENT_INDEX.md",     # Componentes reutilizables
-            "DEVELOPMENT_LOG.md",     # Bitácora de desarrollo (coherencia inter-agente)
-            "DEPENDENCY_MANIFEST.md", # Librerías disponibles
-            "PLAYBOOK.md",            # Soluciones conocidas
-            "BUSINESS_CONTEXT.md",    # Contexto de negocio
-        ]
-        for fname in intelligence_files:
-            if total_chars >= MAX_CONTEXT:
-                break
-            content = self._read_project_file(fname)
-            if content:
-                if fname == "DEVELOPMENT_LOG.md":
-                    # Conservar el final de la bitácora (las tareas más recientes)
-                    truncated = content[-6000:]
-                else:
-                    truncated = content[:4000]
-                parts.append(f"--- {fname} ---\n{truncated}\n")
-                total_chars += len(truncated)
-
-        # 2. PROJECT_TREE.md — Solo si hay espacio (es largo pero muy útil)
-        if total_chars < MAX_CONTEXT:
-            tree = self._read_project_file("PROJECT_TREE.md")
-            if tree:
-                truncated = tree[:5000]
-                parts.append(f"--- PROJECT_TREE.md ---\n{truncated}\n")
-                total_chars += len(truncated)
-
-        # 3. RAG — Código relevante del codebase indexado
-        from core.rag_coder import CodeKnowledgeBase
-        from core.state import DB_PATH
-        try:
-            rag = CodeKnowledgeBase(DB_PATH, active_project=self.project_path)
-            rag_context = rag.query_code(task_desc, k=4)
-            if rag_context and total_chars < MAX_CONTEXT:
-                truncated = rag_context[:4000]
-                parts.append(f"### [CONTEXTO RELEVANTE RAG]\n{truncated}\n")
-                total_chars += len(truncated)
-        except Exception as e:
-            logger.debug("No se pudo obtener contexto RAG para la tarea: %s", e)
-
-        # 4. Vecinos funcionales: archivos generados que son relevantes para ESTA tarea
-        for fname in self.generated_files:
-            if total_chars >= MAX_CONTEXT:
-                break
-            if fname == output_file or fname in intelligence_files:
-                continue
-            # Incluir si el nombre del archivo aparece en la descripción de la tarea
-            # o si es un archivo de arquitectura/diseño central
-            is_relevant = (
-                fname.lower().replace("_", " ").replace("-", " ") in task_desc.lower() or
-                "architecture" in fname.lower() or
-                "design" in fname.lower() or
-                fname.endswith(('.py', '.js', '.jsx', '.ts', '.tsx'))
-            )
-            if is_relevant:
-                content = self._read_project_file(fname)
-                if content:
-                    truncated = content[:3000]
-                    parts.append(f"--- {fname} ---\n{truncated}\n")
-                    total_chars += len(truncated)
-
-        # 5. PRIORIDAD BAJA: Tablero actual (solo resumen de estado, no el completo)
-        if total_chars < MAX_CONTEXT:
-            board = self._read_project_file(self.board_filename)
-            if board:
-                truncated = board[:2000]
-                parts.append(f"--- {self.board_filename} (estado actual) ---\n{truncated}\n")
-
-        return "\n".join(parts)
+        """Construye un contexto inteligente delegando la orquestación a core/rag_coder.py."""
+        from core.rag_coder import build_dynamic_rag_context
+        return build_dynamic_rag_context(self.project_path, task_desc, output_file)
 
     def _run_dor_validation(self) -> bool:
         """Un QA Agent audita el BACKLOG.md para certificar que está listo (DoR)."""
