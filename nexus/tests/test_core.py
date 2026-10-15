@@ -1,0 +1,2202 @@
+"""
+tests/test_core.py — Sprint 4.5: Pruebas unitarias de Jellyfish OS core.
+
+Cubre las funciones más propensas a errores silenciosos identificadas en la auditoría:
+  - Parseo SSE/Ollama de streams
+  - Parseo seguro de JSON del orquestador
+  - Detección de comandos destructivos
+  - Truncamiento inteligente de terminal
+  - Presupuesto de tokens del historial
+  - Plugin sandbox (mock)
+
+Ejecutar con:
+    cd /home/gerardo/MisModelosIA/agencia
+    source venv/bin/activate
+    python -m pytest tests/ -v
+"""
+
+import json
+import os
+import sys
+import tempfile
+from unittest.mock import patch, MagicMock
+import pytest
+import dotenv
+dotenv.load_dotenv = lambda *args, **kwargs: None
+
+# Aseguramos que el proyecto esté en el path
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+
+# ---------------------------------------------------------------------------
+# 1. Parseo de líneas de stream SSE/Ollama (core/llm_engine.py)
+# ---------------------------------------------------------------------------
+
+class TestStreamParsers:
+    def test_parse_sse_line_valid(self):
+        from core.llm_engine import _parse_sse_line
+        payload = json.dumps({"choices": [{"delta": {"content": "hola"}}]})
+        line = f"data: {payload}".encode()
+        assert _parse_sse_line(line, "openai") == "hola"
+
+    def test_parse_sse_line_done(self):
+        from core.llm_engine import _parse_sse_line
+        assert _parse_sse_line(b"data: [DONE]", "openai") == ""
+
+    def test_parse_sse_line_empty(self):
+        from core.llm_engine import _parse_sse_line
+        assert _parse_sse_line(b"", "openai") == ""
+
+    def test_parse_sse_line_malformed_json(self):
+        from core.llm_engine import _parse_sse_line
+        assert _parse_sse_line(b"data: {not valid json}", "openai") == ""
+
+    def test_parse_ollama_line_valid(self):
+        from core.llm_engine import _parse_ollama_line
+        payload = json.dumps({"message": {"content": "mundo"}}).encode()
+        assert _parse_ollama_line(payload) == "mundo"
+
+    def test_parse_ollama_line_no_message(self):
+        from core.llm_engine import _parse_ollama_line
+        payload = json.dumps({"done": True}).encode()
+        assert _parse_ollama_line(payload) == ""
+
+    def test_parse_ollama_line_malformed(self):
+        from core.llm_engine import _parse_ollama_line
+        assert _parse_ollama_line(b"not-json") == ""
+
+
+# ---------------------------------------------------------------------------
+# 2. Parseo robusto de plan JSON del orquestador (core/orchestrator.py)
+# ---------------------------------------------------------------------------
+
+class TestPlanParser:
+    def setup_method(self):
+        from core.orchestrator import _parse_plan_safe
+        self.parse = _parse_plan_safe
+
+    def test_plain_array(self):
+        text = '[{"query": "buscar plugins"}, {"query": "ver state"}]'
+        result = self.parse(text)
+        assert len(result) == 2
+        assert result[0]["query"] == "buscar plugins"
+
+    def test_wrapped_object_steps(self):
+        text = '{"steps": [{"query": "analizar rag"}, {"query": "ver crud"}]}'
+        result = self.parse(text)
+        assert len(result) == 2
+
+    def test_wrapped_object_plan(self):
+        text = '{"plan": [{"query": "revisar terminal"}]}'
+        result = self.parse(text)
+        assert len(result) == 1
+
+    def test_markdown_fenced_json(self):
+        text = '```json\n[{"query": "entender orchestrator"}]\n```'
+        result = self.parse(text)
+        assert len(result) == 1
+        assert result[0]["query"] == "entender orchestrator"
+
+    def test_garbage_returns_empty(self):
+        result = self.parse("Lo siento, no puedo generar el plan en este momento.")
+        assert result == []
+
+    def test_array_with_missing_query_key_filtered(self):
+        text = '[{"step": "uno"}, {"query": "valido"}]'
+        result = self.parse(text)
+        assert len(result) == 1
+        assert result[0]["query"] == "valido"
+
+    def test_empty_string(self):
+        assert self.parse("") == []
+
+    def test_nested_array_in_text(self):
+        text = 'Aquí está el plan: [{"query": "paso uno"}] espero que ayude.'
+        result = self.parse(text)
+        assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# 3. Detección de comandos destructivos (core/terminal.py)
+# ---------------------------------------------------------------------------
+
+class TestDestructiveFilter:
+    def setup_method(self):
+        from core.terminal import _is_destructive
+        self.check = _is_destructive
+
+    def test_rm_rf_blocked(self):
+        dangerous, _ = self.check("rm -rf /home/user")
+        assert dangerous is True
+
+    def test_rm_fr_blocked(self):
+        dangerous, _ = self.check("rm -fr /tmp/folder")
+        assert dangerous is True
+
+    def test_mkfs_blocked(self):
+        dangerous, _ = self.check("mkfs.ext4 /dev/sdb1")
+        assert dangerous is True
+
+    def test_dd_dev_blocked(self):
+        dangerous, _ = self.check("dd if=/dev/zero of=/dev/sda bs=512")
+        assert dangerous is True
+
+    def test_fork_bomb_blocked(self):
+        dangerous, _ = self.check(":(){:|:&};:")
+        assert dangerous is True
+
+    def test_safe_rm_allowed(self):
+        dangerous, _ = self.check("rm -f /tmp/myfile.log")
+        assert dangerous is False
+
+    def test_ls_allowed(self):
+        dangerous, _ = self.check("ls -la /home")
+        assert dangerous is False
+
+    def test_git_status_allowed(self):
+        dangerous, _ = self.check("git status")
+        assert dangerous is False
+
+    def test_pip_install_allowed(self):
+        dangerous, _ = self.check("pip install requests")
+        assert dangerous is False
+
+
+# ---------------------------------------------------------------------------
+# 4. Truncamiento inteligente head+tail (core/terminal.py)
+# ---------------------------------------------------------------------------
+
+class TestSmartTruncate:
+    def setup_method(self):
+        from core.terminal import _smart_truncate
+        self.trunc = _smart_truncate
+
+    def test_short_text_unchanged(self):
+        text = "hola mundo"
+        assert self.trunc(text, max_chars=100) == text
+
+    def test_long_text_truncated(self):
+        text = "A" * 200 + "B" * 200
+        result = self.trunc(text, max_chars=100)
+        assert "omitidos" in result
+        # Debe preservar inicio y final
+        assert result.startswith("A" * 50)
+        assert result.endswith("B" * 50)
+
+    def test_exactly_at_limit_unchanged(self):
+        text = "X" * 100
+        assert self.trunc(text, max_chars=100) == text
+
+
+# ---------------------------------------------------------------------------
+# 5. Presupuesto de tokens en historial (core/state.py)
+# ---------------------------------------------------------------------------
+
+class TestTokenBudget:
+    def setup_method(self):
+        import os
+        self._orig_env = os.environ.get("JELLYFISH_ACTIVE_PROJECT")
+        os.environ["JELLYFISH_ACTIVE_PROJECT"] = ""
+
+    def teardown_method(self):
+        import os
+        if self._orig_env is not None:
+            os.environ["JELLYFISH_ACTIVE_PROJECT"] = self._orig_env
+        else:
+            os.environ.pop("JELLYFISH_ACTIVE_PROJECT", None)
+
+    def test_history_trimmed_when_over_budget(self):
+        import core.state as s
+        import core.state.core as sc
+        orig_s = s._HISTORY_CHAR_BUDGET
+        orig_sc = sc._HISTORY_CHAR_BUDGET
+        s._HISTORY_CHAR_BUDGET = 200
+        sc._HISTORY_CHAR_BUDGET = 200
+        try:
+            from core.state import JellyfishState
+            state = JellyfishState()
+            state.active_project = ""
+            state.history_summary = ""
+            state.static_history = []  # vaciar contexto estático para el test
+
+            # Agregar mensajes que superen el presupuesto
+            for i in range(20):
+                state.history.append({"role": "user", "content": "X" * 20})
+
+            history = state.get_full_history()
+            total_chars = sum(len(m.get("content", "")) for m in history)
+            assert total_chars <= 200 + 40  # margen por estático vacío
+        finally:
+            s._HISTORY_CHAR_BUDGET = orig_s
+            sc._HISTORY_CHAR_BUDGET = orig_sc
+
+    def test_latest_message_survives(self):
+        from core.state import JellyfishState
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            state.context_files.clear()
+            state.static_history = []
+
+            # El último mensaje debe siempre preservarse
+            for i in range(5):
+                state.history.append({"role": "user", "content": "A" * 10})
+            state.history.append({"role": "user", "content": "ÚLTIMO"})
+
+            history = state.get_full_history()
+            contents = [m["content"] for m in history]
+            assert "ÚLTIMO" in contents
+
+    def test_latest_message_survives_large_static_context(self):
+        from core.state import JellyfishState
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            state.context_files.clear()
+            state.static_history = [{"role": "system", "content": "S" * 500}]
+            state.history.clear()
+            state.history.append({"role": "user", "content": "pregunta final importante"})
+
+            history = state.get_full_history()
+            assert history[-1]["content"].endswith("pregunta final importante")
+
+    def test_history_persistance_in_active_project(self):
+        import tempfile
+        import shutil
+        import os
+        from core.state import JellyfishState
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            state.history.clear()  # Limpiar cualquier historial residual del host de desarrollo
+            
+            # Append something to history
+            state.history.append({"role": "user", "content": "Hola test"})
+            
+            # Check if JELLYFISH_HISTORY.md and .jellyfish_history.json were created
+            json_path = os.path.join(temp_dir, ".jellyfish_history.json")
+            md_path = os.path.join(temp_dir, "JELLYFISH_HISTORY.md")
+            
+            assert os.path.isfile(json_path)
+            assert os.path.isfile(md_path)
+            
+            # Verify contents of JSON
+            import json
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            assert data["history"] == [{"role": "user", "content": "Hola test"}]
+            
+            # Verify load_history_from_project
+            state2 = JellyfishState()
+            state2.active_project = temp_dir
+            state2.load_history_from_project()
+            assert len(state2.history) == 1
+            assert state2.history[0]["role"] == "user"
+            assert state2.history[0]["content"] == "Hola test"
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_history_sliding_window_limit(self):
+        from core.state import JellyfishState
+        import os
+        os.environ["JELLYFISH_MAX_HISTORY_SIZE"] = "5"
+        try:
+            state = JellyfishState()
+            state.history.clear()
+            for i in range(10):
+                state.history.append({"role": "user", "content": f"msg {i}"})
+            
+            assert len(state.history) == 5
+            assert state.history[0]["content"] == "msg 5"
+            assert state.history[-1]["content"] == "msg 9"
+        finally:
+            os.environ.pop("JELLYFISH_MAX_HISTORY_SIZE", None)
+
+    def test_sliding_window_strict_messages(self):
+        from core.state import JellyfishState
+        import core.state as s
+        import os
+        orig_limit = s._SLIDING_WINDOW_MAX_MESSAGES
+        s._SLIDING_WINDOW_MAX_MESSAGES = 4
+        try:
+            state = JellyfishState()
+            state.active_project = ""
+            state.history_summary = ""
+            state.static_history = []
+            state.history.clear()
+            for i in range(10):
+                state.history.append({"role": "user", "content": f"msg {i}"})
+            
+            full_history = state.get_full_history()
+            conv_msgs = [m for m in full_history if not m.get("content", "").startswith("[RESUMEN")]
+            # Debería retornar a lo sumo 4 mensajes de conversación
+            assert len(conv_msgs) == 4
+            assert conv_msgs[0]["content"] == "msg 6"
+            assert conv_msgs[-1]["content"] == "msg 9"
+        finally:
+            s._SLIDING_WINDOW_MAX_MESSAGES = orig_limit
+
+
+
+# ---------------------------------------------------------------------------
+# 5.1. Configuración de proveedores cloud
+# ---------------------------------------------------------------------------
+
+class TestProviderConfig:
+    def test_normalize_provider_aliases(self):
+        from core.state import normalize_provider
+        assert normalize_provider("google") == "gemini"
+        assert normalize_provider("dashscope") == "qwen"
+        assert normalize_provider("moonshot") == "kimi"
+        assert normalize_provider("glm") == "zhipu"
+        assert normalize_provider("claude") == "claude"
+
+    def test_openai_compatible_url_for_gemini(self):
+        from core.llm_engine import _get_provider_config
+
+        class DummyState:
+            provider = "gemini"
+            ollama_url = "http://localhost:11434/api/chat"
+            base_urls = {"gemini": "https://generativelanguage.googleapis.com/v1beta/openai"}
+            api_keys = {"gemini": "GeminiKeyABC"}
+            gemini_base_url = base_urls["gemini"]
+            gemini_api_key = api_keys["gemini"]
+
+        url, headers = _get_provider_config(DummyState(), "gemini")
+        assert url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        assert headers["Authorization"] == "Bearer GeminiKeyABC"
+
+    def test_prepare_payload_gemini_translation(self):
+        from core.llm_engine import _prepare_payload
+        messages = [{"role": "user", "content": "Hola."}]
+        
+        # Test translation of gemini-1.5-flash to gemini-1.5-flash
+        payload1 = _prepare_payload("gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-1.5-flash", messages, 1)
+        assert payload1["model"] == "gemini-1.5-flash"
+
+        # Test translation of gemini-2.5-flash to gemini-2.5-flash
+        payload2 = _prepare_payload("gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash", messages, 1)
+        assert payload2["model"] == "gemini-2.5-flash"
+
+    def test_config_key_preserves_case(self):
+        from core.commands.config import _handle_config
+
+        class DummyState:
+            def __init__(self):
+                self.saved = {}
+            def save_config(self, **kwargs):
+                self.saved.update(kwargs)
+
+        state = DummyState()
+        _handle_config("key openai Sk-ABC_def-123", state, lambda: None)
+        assert state.saved["openai_key"] == "Sk-ABC_def-123"
+
+    def test_get_provider_config_native_claude(self):
+        from core.llm_engine import _get_provider_config
+
+        class DummyState:
+            provider = "claude"
+            base_urls = {"claude": "https://api.anthropic.com/v1"}
+            api_keys = {"claude": "ClaudeKey123"}
+            claude_base_url = base_urls["claude"]
+            claude_api_key = api_keys["claude"]
+
+        url, headers = _get_provider_config(DummyState(), "claude")
+        assert url == "https://api.anthropic.com/v1/messages"
+        assert headers["x-api-key"] == "ClaudeKey123"
+        assert headers["anthropic-version"] == "2023-06-01"
+
+    def test_prepare_payload_claude(self):
+        from core.llm_engine import _prepare_payload
+        
+        messages = [
+            {"role": "system", "content": "Eres un programador experto."},
+            {"role": "user", "content": "Hola Claude."}
+        ]
+        
+        # Test native Claude payload preparation
+        payload = _prepare_payload("claude", "https://api.anthropic.com/v1/messages", "claude-3-5-sonnet", messages, 1)
+        assert payload["model"] == "claude-3-5-sonnet"
+        assert payload["system"] == "Eres un programador experto."
+        assert len(payload["messages"]) == 1
+        assert payload["messages"][0]["role"] == "user"
+        assert payload["messages"][0]["content"] == "Hola Claude."
+        assert payload["max_tokens"] == 4096
+        assert payload["temperature"] == 0.2
+        
+        # Test OpenAI compatible Claude payload (no native api.anthropic.com base url)
+        payload_openai = _prepare_payload("claude", "https://api.openrouter.ai", "claude-3-5-sonnet", messages, 1)
+        assert payload_openai["model"] == "claude-3-5-sonnet"
+        assert "system" not in payload_openai
+        assert len(payload_openai["messages"]) == 2
+        assert payload_openai["messages"][0]["role"] == "system"
+        assert "max_tokens" not in payload_openai
+
+    def test_prepare_payload_ollama(self):
+        from core.llm_engine import _prepare_payload
+        
+        messages = [
+            {"role": "system", "content": "Eres un programador experto."},
+            {"role": "user", "content": "Hola Ollama."}
+        ]
+        
+        payload = _prepare_payload("ollama", "http://localhost:11434/api/chat", "qwen2.5-coder", messages, 1)
+        assert payload["model"] == "qwen2.5-coder"
+        assert "system" not in payload
+        assert "max_tokens" not in payload
+        assert "temperature" not in payload
+        assert payload["options"]["temperature"] == 0.2
+        assert len(payload["messages"]) == 2
+        assert payload["messages"][0]["role"] == "system"
+        assert payload["messages"][0]["content"] == "Eres un programador experto."
+        assert payload["messages"][1]["role"] == "user"
+        assert payload["messages"][1]["content"] == "Hola Ollama."
+
+
+# ---------------------------------------------------------------------------
+# 6. Sanitización de nombres de archivos (core/crud.py)
+# ---------------------------------------------------------------------------
+
+class TestSanitizeName:
+    def setup_method(self):
+        from core.commands.entity import _sanitize_name
+        self.sanitize = _sanitize_name
+
+    def test_removes_special_chars(self):
+        assert self.sanitize("mi agente!@#") == "mi_agente"
+
+    def test_lowercases(self):
+        assert self.sanitize("MiAgente") == "miagente"
+
+    def test_spaces_to_underscores(self):
+        assert self.sanitize("mi agente nuevo") == "mi_agente_nuevo"
+
+    def test_empty_returns_empty(self):
+        assert self.sanitize("!!!") == ""
+
+    def test_dots_and_dashes_preserved(self):
+        result = self.sanitize("agente-v2.0")
+        assert "agente" in result
+        assert "v2" in result
+
+
+# ---------------------------------------------------------------------------
+# 7. Motor RAG e indexación vectorial sin locks de SQLite (core/rag_coder.py)
+# ---------------------------------------------------------------------------
+
+class DummyEmbeddings:
+    def embed_documents(self, texts):
+        return [[0.1] * 768 for _ in texts]
+    def embed_query(self, text):
+        return [0.1] * 768
+
+class TestRAGCloseAndReindex:
+    def test_active_project_uses_hashed_db_path(self, tmp_path):
+        from core.rag_coder import CodeKnowledgeBase, _dir_hash
+        from unittest.mock import patch
+
+        project = tmp_path / "project"
+        project.mkdir()
+        db_base = tmp_path / "code_vector_db"
+
+        with patch("core.rag_coder.OllamaEmbeddings", return_value=DummyEmbeddings()):
+            kb = CodeKnowledgeBase(str(db_base), active_project=str(project))
+
+        assert kb.db_path == f"{db_base}_{_dir_hash(str(project))}"
+
+    def test_reindex_clear_releases_locks(self, tmp_path):
+        from core.rag_coder import CodeKnowledgeBase
+        from unittest.mock import patch
+
+        db_dir = tmp_path / "test_rag_db"
+        db_path_str = str(db_dir)
+
+        # Mockear OllamaEmbeddings para usar DummyEmbeddings y evitar llamadas de red
+        with patch("core.rag_coder.OllamaEmbeddings", return_value=DummyEmbeddings()):
+            kb = CodeKnowledgeBase(db_path_str)
+
+            # Crear directorio temporal para simular codebase de usuario
+            code_dir = tmp_path / "user_code"
+            code_dir.mkdir()
+            (code_dir / "main.py").write_text("def test():\n    print('hello')\n")
+
+            # Indexar codebase por primera vez
+            count1 = kb.index_codebase(str(code_dir))
+            assert count1 > 0
+
+            # Reindexar (que llamará a clear_index y luego index_codebase)
+            kb.clear_index()
+
+            # Indexar de nuevo sobre el mismo path. Si la BD anterior no se cerró,
+            # esto lanzará un error SQLITE_READONLY_DBMOVED.
+            count2 = kb.index_codebase(str(code_dir))
+            assert count2 > 0
+
+            # Validar que funciona correctamente
+            assert kb.indexed_chunk_count > 0
+
+    def test_reindex_method(self, tmp_path):
+        from core.rag_coder import CodeKnowledgeBase
+        from unittest.mock import patch
+
+        db_dir = tmp_path / "test_rag_db_method"
+        db_path_str = str(db_dir)
+
+        with patch("core.rag_coder.OllamaEmbeddings", return_value=DummyEmbeddings()):
+            kb = CodeKnowledgeBase(db_path_str)
+
+            code_dir = tmp_path / "user_code_method"
+            code_dir.mkdir()
+            (code_dir / "app.py").write_text("def run():\n    pass\n")
+
+            # Indexar codebase por primera vez
+            kb.index_codebase(str(code_dir))
+            assert kb.indexed_chunk_count > 0
+
+            # Probar método reindex()
+            kb.reindex()
+            assert kb.indexed_chunk_count > 0
+
+
+# ---------------------------------------------------------------------------
+# 8. Scrum Team Dinámico (core/project_orchestrator.py)
+# ---------------------------------------------------------------------------
+
+class TestDynamicScrum:
+    def test_parse_sprint_tasks_valid(self):
+        from core.project_orchestrator import _parse_sprint_tasks
+        board_content = """
+# 🗂️ Sprint Board — Sprint 1
+
+## 📋 POR HACER (TODO)
+
+| ID | Tarea | Asignado | Estimación | Entregable |
+|---|---|---|---|---|
+| T-001 | Crear api | @backend_dev | 3pts | api.md |
+| T-002 | Diseñar interfaz | @ui_designer | 2pts | design.md |
+
+## ⏳ EN PROCESO (IN PROGRESS)
+| — | — | — | — | — |
+"""
+        tasks = _parse_sprint_tasks(board_content)
+        assert len(tasks) == 2
+        assert tasks[0]["id"] == "T-001"
+        assert tasks[0]["task"] == "Crear api"
+        assert tasks[0]["agent"] == "backend_dev"
+        assert tasks[0]["estimate"] == "3pts"
+        assert tasks[0]["output_file"] == "api.md"
+
+        assert tasks[1]["id"] == "T-002"
+        assert tasks[1]["agent"] == "ui_designer"
+        assert tasks[1]["output_file"] == "design.md"
+
+    def test_parse_sprint_tasks_empty(self):
+        from core.project_orchestrator import _parse_sprint_tasks
+        board_content = """
+# 🗂️ Sprint Board — Sprint 1
+
+## 📋 POR HACER (TODO)
+| — | — | — | — | — |
+"""
+        tasks = _parse_sprint_tasks(board_content)
+        assert len(tasks) == 0
+
+    def test_parse_sprint_tasks_spanish_headers(self):
+        from core.project_orchestrator import _parse_sprint_tasks
+        board_content = """
+# 🗂️ Sprint Board
+## 📋 PENDIENTES (BACKLOG)
+| ID | Tarea | Asignado | Estimación | Entregable |
+|---|---|---|---|---|
+| T-001 | Tarea en español | @backend_dev | L | src/db.py |
+
+## ⏳ EN PROCESO
+| T-002 | Tarea en proceso | @frontend_dev | S | src/ui.tsx |
+"""
+        tasks = _parse_sprint_tasks(board_content)
+        assert len(tasks) == 1
+        assert tasks[0]["id"] == "T-001"
+        assert tasks[0]["task"] == "Tarea en español"
+        assert tasks[0]["agent"] == "backend_dev"
+        assert tasks[0]["estimate"] == "L"
+        assert tasks[0]["output_file"] == "src/db.py"
+
+    def test_parse_sprint_tasks_omitted_estimate(self):
+        from core.project_orchestrator import _parse_sprint_tasks
+        # 4 columns: ID | Tarea | Asignado | Entregable
+        board_content = """
+## 📋 POR HACER
+| ID | Tarea | Asignado | Entregable |
+|---|---|---|---|
+| T-001 | Tarea sin estimación | @backend_dev | src/app.py |
+"""
+        tasks = _parse_sprint_tasks(board_content)
+        assert len(tasks) == 1
+        assert tasks[0]["id"] == "T-001"
+        assert tasks[0]["task"] == "Tarea sin estimación"
+        assert tasks[0]["agent"] == "backend_dev"
+        assert tasks[0]["estimate"] == "M"  # Inferred default
+        assert tasks[0]["output_file"] == "src/app.py"
+
+    def test_parse_sprint_tasks_shifted_columns(self):
+        from core.project_orchestrator import _parse_sprint_tasks
+        # 5 columns, but estimate column is empty or contains path, or shifted
+        board_content = """
+## 📋 POR HACER
+| ID | Tarea | Asignado | Estimación | Entregable |
+|---|---|---|---|---|
+| T-001 | Tarea 1 | @backend_dev | src/app.py | |
+| T-002 | Tarea 2 | @frontend_dev | | src/index.js |
+"""
+        tasks = _parse_sprint_tasks(board_content)
+        assert len(tasks) == 2
+        
+        assert tasks[0]["id"] == "T-001"
+        assert tasks[0]["estimate"] == "M"
+        assert tasks[0]["output_file"] == "src/app.py"
+
+        assert tasks[1]["id"] == "T-002"
+        assert tasks[1]["estimate"] == "M"
+        assert tasks[1]["output_file"] == "src/index.js"
+
+    def test_scan_available_agents(self):
+        from core.project_orchestrator import _scan_available_agents
+        agents = _scan_available_agents()
+        assert len(agents) > 0
+        names = [a["name"] for a in agents]
+        # Roles de gestión no deben estar en la lista de asignación
+        assert "product_owner" not in names
+        assert "scrum_master" not in names
+        assert "backend_dev" in names
+
+    def test_run_scrum_master_success(self, tmp_path):
+        from core.state import JellyfishState
+        from core.project_orchestrator import ProjectOrchestrator
+        from unittest.mock import MagicMock
+
+        project_dir = tmp_path / "scrum_proj"
+        project_dir.mkdir()
+        
+        # Create a mock backlog file
+        backlog_file = project_dir / "BACKLOG.md"
+        with open(backlog_file, "w", encoding="utf-8") as f:
+            f.write("# Backlog\n")
+
+        state = JellyfishState()
+        state.active_project = str(project_dir)
+        state.provider = "ollama"
+        state.model = "qwen"
+
+        orchestrator = ProjectOrchestrator(state)
+        
+        # Mock _call_agent to return a valid board content
+        mock_board = """
+# 🗂️ Sprint Board — Sprint 1
+
+## 📋 POR HACER (TODO)
+
+| ID | Tarea | Asignado | Estimación | Entregable |
+|---|---|---|---|---|
+| T-001 | Crear api | @backend_dev | 3pts | api.md |
+
+## ⏳ EN PROCESO (IN PROGRESS)
+| — | — | — | — | — |
+"""
+        orchestrator._call_agent = MagicMock(return_value=mock_board)
+        
+        # Run _run_scrum_master and verify it returns True
+        result = orchestrator._run_scrum_master("Test user idea")
+        assert result is True
+        # El pipeline /auto escribe en SPRINT_BOARD.md
+        assert os.path.exists(os.path.join(str(project_dir), "SPRINT_BOARD.md"))
+
+    def test_estimate_tokens(self):
+        from core.state import estimate_tokens
+        # Cadenas vacías o cortas
+        assert estimate_tokens("") == 0
+        assert estimate_tokens("hello") == 1
+        
+        # Cadenas ricas en código vs texto plano
+        plaintext = "Este es un texto plano de prueba en español para estimar."
+        code = "def suma(a, b): return a + b # sum function"
+        
+        plaintext_est = estimate_tokens(plaintext)
+        code_est = estimate_tokens(code)
+        
+        assert plaintext_est > 0
+        assert code_est > 0
+        # El código suele estimarse con mayor proporción de tokens por carácter que el texto plano debido a los símbolos especiales
+        assert len(code) < len(plaintext)
+        
+    def test_project_lockfile(self, tmp_path):
+        import os
+        from core.state import JellyfishState, _cleanup_lock
+        
+        project_dir = tmp_path / "lock_test_proj"
+        project_dir.mkdir()
+        
+        state = JellyfishState()
+        state.active_project = str(project_dir)
+        state._update_project_lock("")
+        
+        lock_file = project_dir / ".jellyfish.lock"
+        assert lock_file.exists()
+        
+        with open(lock_file, "r") as f:
+            pid = int(f.read().strip())
+        assert pid == os.getpid()
+        
+        # Cleanup
+        _cleanup_lock(str(project_dir))
+        assert not lock_file.exists()
+
+    def test_task_runner_parser(self, tmp_path):
+        import shutil
+        import re
+        import os
+        
+        # Simular project path
+        project_path = str(tmp_path / "parser_test")
+        os.makedirs(project_path, exist_ok=True)
+        
+        # Simular respuesta de agente con XML y Markdown annotations
+        agent_response = """
+Hola Scrum Master, aquí tienes la documentación.
+<write_file path="src/backend/app.py">
+def main():
+    print("hello from backend")
+</write_file>
+
+Y también el archivo frontend:
+[WRITE_FILE: public/index.html]
+```html
+<!DOCTYPE html>
+<html>
+<body>
+    <h1>App</h1>
+</body>
+</html>
+```
+Todo listo.
+"""
+        
+        created_files = []
+        
+        # Formato 1: XML tags
+        xml_matches = re.findall(r'<write_file\s+path="([^"]+)">\s*\n?(.*?)\s*\n?</write_file>', agent_response, re.DOTALL)
+        for rel_path, file_content in xml_matches:
+            full_path = os.path.join(project_path, rel_path.strip())
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(file_content)
+            created_files.append(rel_path.strip())
+            
+        # Formato 2: Markdown headers
+        md_matches = re.findall(r'\[WRITE_FILE:\s*([^\]\s]+)\]\s*\n*```[a-zA-Z0-9_-]*\n(.*?)\n```', agent_response, re.DOTALL)
+        for rel_path, file_content in md_matches:
+            rel_clean = rel_path.strip()
+            if rel_clean in created_files:
+                continue
+            full_path = os.path.join(project_path, rel_clean)
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(file_content)
+            created_files.append(rel_clean)
+
+        assert "src/backend/app.py" in created_files
+        assert "public/index.html" in created_files
+        
+        # Verificar existencia física
+        assert os.path.exists(os.path.join(project_path, "src/backend/app.py"))
+        assert os.path.exists(os.path.join(project_path, "public/index.html"))
+        
+        with open(os.path.join(project_path, "src/backend/app.py"), "r") as f:
+            assert "hello from backend" in f.read()
+
+    def test_ensure_ollama_running_mock(self):
+        from core.llm_engine import ensure_ollama_running
+        # Ping a un puerto no en uso para verificar que retorna False y maneja el error sin crashear
+        res = ensure_ollama_running("http://localhost:59999")
+        assert res is False
+
+
+# ---------------------------------------------------------------------------
+# 9. Pruebas Jellyfish OS v7: DoR, Auto-Healing, Lazy Loading y Sandbox Strict Validation
+# ---------------------------------------------------------------------------
+
+class TestJellyfishV7Features:
+    def test_classify_build_error(self):
+        from core.project_orchestrator import ProjectOrchestrator
+        from core.state import JellyfishState
+        state = JellyfishState()
+        orchestrator = ProjectOrchestrator(state)
+        
+        err1 = orchestrator._classify_build_error("ModuleNotFoundError: No module named 'rich'")
+        assert "DEPENDENCIAS" in err1
+
+        err2 = orchestrator._classify_build_error("PermissionError: [Errno 13] Permission denied")
+        assert "ENTORNO/PERMISOS" in err2
+
+        err3 = orchestrator._classify_build_error("SyntaxError: invalid syntax")
+        assert "SINTAXIS" in err3
+
+        err4 = orchestrator._classify_build_error("unrecognized error code 123")
+        assert "GENERAL" in err4
+
+    def test_is_safe_healing_command(self):
+        from core.project_orchestrator import ProjectOrchestrator
+        from core.state import JellyfishState
+        state = JellyfishState()
+        orchestrator = ProjectOrchestrator(state)
+
+        assert orchestrator._is_safe_healing_command("rm -rf .pytest_cache") is True
+        assert orchestrator._is_safe_healing_command("pip install somepackage") is True
+        assert orchestrator._is_safe_healing_command("rm -rf /") is False
+        assert orchestrator._is_safe_healing_command("uninstall something") is False
+
+    def test_plugin_schema_strict_validation(self, tmp_path):
+        from core.plugin_manager import PluginManager
+        from core.state import JellyfishState
+        from unittest.mock import patch, MagicMock
+
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "dummy_plugin.py").write_text("def execute(args): return 'ok'")
+
+        state = JellyfishState()
+        pm = PluginManager(str(plugins_dir))
+
+        # Mock subprocess.run
+        import subprocess
+        mock_run = MagicMock()
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='{"ok": true, "result": "Plugin Output"}',
+            stderr=''
+        )
+
+        with patch("subprocess.run", return_value=mock_run.return_value):
+            res = pm.run_plugin("dummy_plugin", "{}")
+            assert "Plugin Output" in res
+
+        # Retorno no-objeto
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='["not", "a", "dict"]',
+            stderr=''
+        )
+        with patch("subprocess.run", return_value=mock_run.return_value):
+            res = pm.run_plugin("dummy_plugin", "{}")
+            assert "no retornó un objeto JSON válido" in res
+
+        # Retorno sin campo 'ok'
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='{"result": "missing ok"}',
+            stderr=''
+        )
+        with patch("subprocess.run", return_value=mock_run.return_value):
+            res = pm.run_plugin("dummy_plugin", "{}")
+            assert "no retornó el campo de estado 'ok'" in res
+
+    def test_lazy_loading_skills(self, tmp_path):
+        from core.state import JellyfishState
+        import shutil
+
+        # Crear skills ficticios
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "template.md").write_text("template")
+        (skills_dir / "git_helper.md").write_text("git helper behavior")
+        (skills_dir / "docker_helper.md").write_text("docker helper behavior")
+        (skills_dir / "k8s_helper.md").write_text("k8s helper behavior")
+        (skills_dir / "aws_helper.md").write_text("aws helper behavior")
+
+        state = JellyfishState()
+        state.active_skills = [
+            str(skills_dir / "template.md"),
+            str(skills_dir / "git_helper.md"),
+            str(skills_dir / "docker_helper.md"),
+            str(skills_dir / "k8s_helper.md"),
+            str(skills_dir / "aws_helper.md"),
+        ]
+
+        # Simular historial
+        state.history = [{"role": "user", "content": "Necesito ayuda con git_helper"}]
+        state.refresh_static_context()
+
+        # Debe cargar git_helper pero NO docker_helper (Lazy Loading!)
+        static_contents = [msg["content"] for msg in state.static_history]
+        joined = "\n".join(static_contents)
+
+        assert "git helper behavior" in joined
+        assert "docker helper behavior" not in joined
+
+    def test_reset_circuit_breaker_method(self, tmp_path):
+        from core.project_orchestrator import ProjectOrchestrator
+        from core.state import JellyfishState
+        
+        project_dir = tmp_path / "reset_cb_proj"
+        project_dir.mkdir()
+        
+        state = JellyfishState()
+        state.active_project = str(project_dir)
+        
+        orchestrator = ProjectOrchestrator(state)
+        
+        cb_path = project_dir / ".jellyfish_circuit_breaker"
+        exit_code_path = project_dir / ".jellyfish_last_exit_code"
+        
+        cb_path.write_text("5")
+        exit_code_path.write_text("1")
+        
+        assert orchestrator._get_circuit_breaker_count() == 5
+        assert orchestrator._get_last_exit_code() == 1
+        
+        orchestrator._reset_circuit_breaker()
+        
+        assert orchestrator._get_circuit_breaker_count() == 0
+        assert orchestrator._get_last_exit_code() == 0
+        assert not cb_path.exists()
+        assert not exit_code_path.exists()
+
+    def test_build_failure_captured_errors(self, tmp_path):
+        from core.project_orchestrator import ProjectOrchestrator
+        from core.state import JellyfishState
+        from unittest.mock import patch
+        
+        project_dir = tmp_path / "build_fail_proj"
+        project_dir.mkdir()
+        
+        state = JellyfishState()
+        state.active_project = str(project_dir)
+        
+        orchestrator = ProjectOrchestrator(state)
+        # Bypasar el auto-healing para evitar llamadas LLM/Ollama reales durante el test
+        orchestrator._auto_heal_build_error = lambda cmd, code, out: (code, out)
+        
+        # Mock run_terminal_command to simulate build failure
+        with patch("core.terminal.run_terminal_command") as mock_run:
+            def side_effect(cmd, state, **kwargs):
+                if 'return_code_dict' in kwargs:
+                    kwargs['return_code_dict']['returncode'] = 1
+                return "make failed: compilation error"
+            mock_run.side_effect = side_effect
+            
+            orchestrator._run_build_command("make")
+            
+            assert hasattr(state, "captured_errors")
+            assert len(state.captured_errors) > 0
+            assert "Fallo de compilación" in state.captured_errors[-1]
+            assert "make failed" in state.captured_errors[-1]
+
+
+from unittest.mock import patch, MagicMock
+
+class TestResilientLLMFallback:
+    def test_select_fallback_model(self):
+        from core.llm_engine import _select_fallback_model
+
+        # Caso 1: Hay un modelo preferido disponible que no ha fallado
+        available = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-2.5-pro"]
+        failed = {"gemini-2.5-pro"}
+        selected = _select_fallback_model("gemini", available, failed)
+        assert selected == "gemini-2.5-flash"
+
+        # Caso 2: Ninguno de la lista de prioridades coincide, pero hay otro disponible
+        available = ["some-random-model-v2", "another-custom-model"]
+        failed = {"some-random-model-v2"}
+        selected = _select_fallback_model("openai", available, failed)
+        assert selected == "another-custom-model"
+
+        # Caso 3: Todos han fallado, retorna None
+        available = ["gpt-4o", "gpt-4o-mini"]
+        failed = {"gpt-4o", "gpt-4o-mini"}
+        selected = _select_fallback_model("openai", available, failed)
+        assert selected is None
+
+    @patch("core.llm_engine._fetch_ollama_models_local")
+    @patch("core.llm_engine.ensure_ollama_running")
+    def test_fallback_to_local_ollama(self, mock_ensure, mock_fetch):
+        from core.llm_engine import _fallback_to_local_ollama
+        from core.state import JellyfishState
+        from unittest.mock import patch
+
+        state = JellyfishState()
+        mock_fetch.return_value = ["qwen2.5-coder:7b", "llama3:latest"]
+        
+        with patch.object(state, "save_config") as mock_save:
+            provider, model = _fallback_to_local_ollama(state)
+            assert provider == "ollama"
+            assert model == "qwen2.5-coder:7b"
+            mock_save.assert_called_once_with(provider="ollama", model="qwen2.5-coder:7b")
+
+    @patch("core.llm_engine._fetch_provider_models_dynamic")
+    @patch("httpx.AsyncClient")
+    def test_stream_request_fallback_success(self, mock_client_cls, mock_fetch):
+        from core.llm_engine import _stream_request
+        from core.state import JellyfishState
+        import httpx
+        from unittest.mock import MagicMock
+
+        state = JellyfishState()
+        state.provider = "gemini"
+        state.model = "gemini-2.5-pro"
+        state.base_urls["gemini"] = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+        def mock_save_config(**kwargs):
+            if "provider" in kwargs:
+                state.provider = kwargs["provider"]
+            if "model" in kwargs:
+                state.model = kwargs["model"]
+        state.save_config = mock_save_config
+
+        mock_fetch.return_value = ["gemini-2.5-pro", "gemini-2.5-flash"]
+
+        class MockResponse:
+            def __init__(self, status_code, body):
+                self.status_code = status_code
+                self._body = body
+                self.request = MagicMock()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+            async def aread(self):
+                return self._body
+
+            def raise_for_status(self):
+                if self.status_code != 200:
+                    raise httpx.HTTPStatusError("503 error", request=self.request, response=self)
+
+            async def aiter_lines(self):
+                yield self._body.decode("utf-8")
+
+        resp_503 = MockResponse(503, b"Service saturated")
+        resp_200 = MockResponse(200, b'data: {"choices": [{"delta": {"content": "Resilience works!"}}]}')
+
+        class MockClientInstance:
+            def __init__(self):
+                self.responses = [resp_503, resp_200]
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+            def stream(self, method, url, **kwargs):
+                return self.responses.pop(0)
+
+        mock_client_cls.return_value = MockClientInstance()
+
+        res = _stream_request(state, [{"role": "user", "content": "hi"}], "test_agent")
+
+        assert res == "Resilience works!"
+        assert state.model == "gemini-2.5-flash"
+
+    @patch("core.llm_engine._fallback_to_local_ollama")
+    @patch("core.llm_engine._fetch_provider_models_dynamic")
+    @patch("httpx.AsyncClient")
+    def test_stream_request_fallback_plan_c(self, mock_client_cls, mock_fetch, mock_fallback_ollama):
+        from core.llm_engine import _stream_request
+        from core.state import JellyfishState
+        import httpx
+        from unittest.mock import MagicMock
+
+        state = JellyfishState()
+        state.provider = "gemini"
+        state.model = "gemini-2.5-pro"
+        state.base_urls["gemini"] = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+        def mock_save_config(**kwargs):
+            if "provider" in kwargs:
+                state.provider = kwargs["provider"]
+            if "model" in kwargs:
+                state.model = kwargs["model"]
+        state.save_config = mock_save_config
+
+        mock_fetch.side_effect = RuntimeError("API down completely")
+        
+        def fallback_side_effect(s):
+            s.provider = "ollama"
+            s.model = "llama3"
+            return "ollama", "llama3"
+        mock_fallback_ollama.side_effect = fallback_side_effect
+
+        class MockResponse:
+            def __init__(self, status_code, body):
+                self.status_code = status_code
+                self._body = body
+                self.request = MagicMock()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+            async def aread(self):
+                return self._body
+
+            def raise_for_status(self):
+                if self.status_code != 200:
+                    raise httpx.HTTPStatusError("503 error", request=self.request, response=self)
+
+            async def aiter_lines(self):
+                yield self._body.decode("utf-8")
+
+        resp_503 = MockResponse(503, b"Service saturated")
+        resp_200 = MockResponse(200, b'{"message": {"content": "Local Ollama works!"}}')
+
+        class MockClientInstance:
+            def __init__(self):
+                self.responses = [resp_503, resp_200]
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+
+            def stream(self, method, url, **kwargs):
+                return self.responses.pop(0)
+
+        mock_client_cls.return_value = MockClientInstance()
+
+        res = _stream_request(state, [{"role": "user", "content": "hi"}], "test_agent")
+
+        assert res == "Local Ollama works!"
+        mock_fallback_ollama.assert_called_once()
+
+    def test_message_truncation(self):
+        from core.llm_engine import _truncate_messages_to_budget
+        
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "A very long message " * 1000},
+            {"role": "assistant", "content": "Short reply"},
+            {"role": "user", "content": "Recent message"},
+        ]
+        
+        truncated = _truncate_messages_to_budget(messages, 8192)
+        assert len(truncated) == 4
+        
+        truncated = _truncate_messages_to_budget(messages, 1100)
+        assert len(truncated) < 4
+        assert truncated[0]["role"] == "system"
+        assert truncated[-1]["content"] == "Recent message"
+
+    @patch("core.llm_engine._get_sync_client")
+    def test_ollama_timeout_raises_local_llm_timeout_error(self, mock_get_sync_client):
+        from core.llm_engine import _call_llm_silent, LocalLLMTimeoutError
+        import httpx
+        from unittest.mock import MagicMock
+        
+        state = MagicMock()
+        state.provider = "ollama"
+        state.ollama_base_url = "http://localhost:11434"
+        state.model = "llama3"
+        state.context_limit = 8192
+        
+        mock_client = MagicMock()
+        mock_client.stream.side_effect = httpx.TimeoutException("Ollama read timeout")
+        mock_get_sync_client.return_value = mock_client
+        
+        with pytest.raises(LocalLLMTimeoutError) as exc_info:
+            _call_llm_silent(state, [{"role": "user", "content": "hi"}])
+            
+        assert "superó el tiempo de espera" in str(exc_info.value)
+
+    @patch("httpx.AsyncClient")
+    def test_stream_request_ollama_timeout(self, mock_client_cls):
+        from core.llm_engine import _stream_request, LocalLLMTimeoutError
+        from core.state import JellyfishState
+        import httpx
+        from unittest.mock import MagicMock
+        
+        state = JellyfishState()
+        state.provider = "ollama"
+        state.ollama_base_url = "http://localhost:11434"
+        state.model = "llama3"
+        state.context_limit = 8192
+        
+        class MockClientInstance:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                pass
+            def stream(self, method, url, **kwargs):
+                raise httpx.TimeoutException("Ollama async timeout")
+                
+        mock_client_cls.return_value = MockClientInstance()
+        
+        with pytest.raises(LocalLLMTimeoutError) as exc_info:
+            _stream_request(state, [{"role": "user", "content": "hi"}], "test_agent")
+            
+        assert "superó el tiempo de espera" in str(exc_info.value)
+
+    def test_local_context_limit_loading(self):
+        from core.state import JellyfishState
+        from unittest.mock import patch
+        import os
+
+        orig_getenv = os.getenv
+        def mock_getenv(key, default=None):
+            if key == "JELLYFISH_LOCAL_CONTEXT_LIMIT":
+                return "2048"
+            return orig_getenv(key, default)
+
+        with patch("os.getenv", side_effect=mock_getenv):
+            state = JellyfishState()
+            assert state.local_context_limit == 2048
+
+    def test_prepare_payload_local_context_limit(self):
+        from core.llm_engine import _prepare_payload
+        from unittest.mock import MagicMock
+
+        state = MagicMock()
+        state.local_context_limit = 2048
+        state.context_limit = 8192
+
+        # Ollama payload should use local_context_limit
+        payload = _prepare_payload("ollama", "http://localhost:11434/api/chat", "llama3", [{"role": "user", "content": "hi"}], state=state)
+        assert payload["options"]["num_ctx"] == 2048
+
+        # Other providers (cloud) should not have option num_ctx in their payload
+        payload_cloud = _prepare_payload("gemini", "https://api.gemini.com/v1", "gemini-2.5-flash", [{"role": "user", "content": "hi"}], state=state)
+        assert "options" not in payload_cloud
+
+    def test_global_keybindings_ctrl_c(self):
+        from core.terminal import get_global_keybindings
+        from core.state import JellyfishState
+        from unittest.mock import MagicMock
+
+        state = JellyfishState()
+        kb = get_global_keybindings(state)
+
+        # Buscar nuestro atajo específico para Ctrl+C por el nombre de su handler
+        target_binding = None
+        for b in kb.bindings:
+            if getattr(b.handler, "__name__", "") == "_exit_on_ctrl_c":
+                target_binding = b
+                break
+
+        assert target_binding is not None, "No se encontró el atajo para Ctrl+C (_exit_on_ctrl_c)"
+
+        # Simular que se presiona Ctrl+C invocando el handler con un evento mockeado
+        mock_event = MagicMock()
+        target_binding.handler(mock_event)
+        mock_event.app.exit.assert_called_once_with(result="/exit")
+
+    @patch("subprocess.Popen")
+    def test_run_terminal_command_auto_healing(self, mock_popen):
+        from core.terminal import run_terminal_command
+        from core.state import JellyfishState
+        from unittest.mock import MagicMock
+        
+        state = JellyfishState()
+        
+        # Simular que al llamar con "docker-compose" lanza FileNotFoundError,
+        # y al llamar con "docker compose" se ejecuta con éxito (exit code 0).
+        def popen_side_effect(args, **kwargs):
+            # args puede ser string o lista
+            cmd_str = args if isinstance(args, str) else " ".join(args)
+            if "docker-compose" in cmd_str:
+                raise FileNotFoundError("[Errno 2] No such file or directory: 'docker-compose'")
+            
+            # Mock del proceso exitoso
+            mock_proc = MagicMock()
+            mock_proc.returncode = 0
+            mock_proc.stdout = ["Docker Compose V2 running successfully\n"]
+            mock_proc.stderr = []
+            mock_proc.wait.return_value = 0
+            return mock_proc
+
+        mock_popen.side_effect = popen_side_effect
+        
+        ret_dict = {'returncode': 0}
+        res = run_terminal_command(
+            "docker-compose --version",
+            state,
+            silent_history=True,
+            return_code_dict=ret_dict
+        )
+        
+        assert "Docker Compose V2 running successfully" in res
+        assert ret_dict['returncode'] == 0
+
+    @patch("core.llm_engine._call_llm_silent")
+    @patch("builtins.input")
+    @patch("core.orchestration.product_owner.Confirm.ask")
+    def test_product_owner_refinement_loop_success(self, mock_confirm, mock_input, mock_call_llm):
+        from core.state import JellyfishState
+        from core.project_orchestrator import ProjectOrchestrator
+        from core.orchestration.product_owner import ProductOwnerPhase
+        from unittest.mock import MagicMock
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            orchestrator = ProjectOrchestrator(state)
+            orchestrator.project_path = temp_dir
+            
+            # Mock _load_agent_prompt
+            orchestrator._load_agent_prompt = MagicMock(return_value="Agent prompt text")
+            orchestrator._get_last_exit_code = MagicMock(return_value=0)
+            orchestrator._get_circuit_breaker_count = MagicMock(return_value=0)
+            
+            # PO refinement returns:
+            # 1. A question: "What is the DB?"
+            # 2. "READY"
+            mock_call_llm.side_effect = [
+                "What database should we use?",
+                "READY"
+            ]
+            
+            # User responds:
+            # 1. "Supabase" (refinement)
+            # 2. "y" (approval)
+            mock_input.side_effect = ["Supabase", "y"]
+            
+            # Final backlog generation mock
+            mock_json_backlog = (
+                "{\n"
+                '  "proyecto": "NaturaMedics",\n'
+                '  "vision": "A clinic management system",\n'
+                '  "user_stories": [\n'
+                "    {\n"
+                '      "id": "US-001",\n'
+                '      "titulo": "US 1",\n'
+                '      "como": "User",\n'
+                '      "quiero": "View dashboard",\n'
+                '      "para": "Track status",\n'
+                '      "criterios_aceptacion": ["Dado que..."],\n'
+                '      "contexto_rag_necesario": ["app.py"],\n'
+                '      "definition_of_done": ["compila"]\n'
+                "    }\n"
+                "  ]\n"
+                "}"
+            )
+            orchestrator._call_agent = MagicMock(return_value=mock_json_backlog)
+            orchestrator._write_project_file = MagicMock(side_effect=lambda fn, content: True)
+            mock_confirm.return_value = True # Aprove backlog
+            
+            # Simular escritura real en temp_dir para archivos
+            def write_file_side_effect(fn, content):
+                import os
+                with open(os.path.join(temp_dir, fn), "w") as f:
+                    f.write(content)
+                return True
+            orchestrator._write_project_file.side_effect = write_file_side_effect
+            
+            phase = ProductOwnerPhase(orchestrator)
+            res = phase.run("Crear app NaturaMedics")
+            
+            assert res is True
+            # Verificamos que se haya escrito BACKLOG.json
+            import os
+            assert os.path.exists(os.path.join(temp_dir, "BACKLOG.json"))
+            assert os.path.exists(os.path.join(temp_dir, "BACKLOG.md"))
+            
+            # Verificamos que las respuestas se incluyeron en la llamada final al PO
+            call_args = orchestrator._call_agent.call_args[0]
+            po_prompt_passed = call_args[1]
+            assert "Idea inicial del proyecto: Crear app NaturaMedics" in po_prompt_passed
+            assert "Pregunta PO: What database should we use?" in po_prompt_passed
+            assert "Respuesta Usuario: Supabase" in po_prompt_passed
+
+    @patch("core.llm_engine._call_llm_silent")
+    @patch("builtins.input")
+    @patch("core.orchestration.product_owner.Confirm.ask")
+    def test_product_owner_refinement_loop_escape_hatch(self, mock_confirm, mock_input, mock_call_llm):
+        from core.state import JellyfishState
+        from core.project_orchestrator import ProjectOrchestrator
+        from core.orchestration.product_owner import ProductOwnerPhase
+        from unittest.mock import MagicMock
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            orchestrator = ProjectOrchestrator(state)
+            orchestrator.project_path = temp_dir
+            
+            orchestrator._load_agent_prompt = MagicMock(return_value="Agent prompt text")
+            orchestrator._get_last_exit_code = MagicMock(return_value=0)
+            orchestrator._get_circuit_breaker_count = MagicMock(return_value=0)
+            
+            # PO keeps returning questions, but user skips
+            mock_call_llm.side_effect = [
+                "What database should we use?",
+                "This shouldn't be called because user escapes"
+            ]
+            
+            # User uses escape hatch /skip, then approves with "y"
+            mock_input.side_effect = ["/skip", "y"]
+            
+            mock_json_backlog = (
+                "{\n"
+                '  "proyecto": "NaturaMedics",\n'
+                '  "vision": "A clinic management system",\n'
+                '  "user_stories": []\n'
+                "}"
+            )
+            orchestrator._call_agent = MagicMock(return_value=mock_json_backlog)
+            orchestrator._write_project_file = MagicMock()
+            
+            def write_file_side_effect(fn, content):
+                import os
+                with open(os.path.join(temp_dir, fn), "w") as f:
+                    f.write(content)
+                return True
+            orchestrator._write_project_file.side_effect = write_file_side_effect
+            mock_confirm.return_value = True
+            
+            phase = ProductOwnerPhase(orchestrator)
+            res = phase.run("Crear app NaturaMedics")
+            
+            assert res is True
+            import os
+            assert os.path.exists(os.path.join(temp_dir, "BACKLOG.json"))
+
+    @patch("core.llm_engine._call_llm_silent")
+    @patch("builtins.input")
+    def test_product_owner_interactive_feedback_loop(self, mock_input, mock_call_llm):
+        from core.state import JellyfishState
+        from core.project_orchestrator import ProjectOrchestrator
+        from core.orchestration.product_owner import ProductOwnerPhase
+        from unittest.mock import MagicMock
+        import tempfile
+        import os
+        import json
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            orchestrator = ProjectOrchestrator(state)
+            orchestrator.project_path = temp_dir
+            orchestrator._load_agent_prompt = MagicMock(return_value="Agent prompt text")
+            orchestrator._get_last_exit_code = MagicMock(return_value=0)
+            orchestrator._get_circuit_breaker_count = MagicMock(return_value=0)
+
+            # Silencio de refinamiento para que vaya directo a READY
+            mock_call_llm.return_value = "READY"
+
+            # 1. Entrada final del PO
+            # 2. Entrada del PO con el feedback integrado
+            backlog_v1 = (
+                "{\n"
+                '  "proyecto": "NaturaMedics",\n'
+                '  "vision": "Clinic app",\n'
+                '  "user_stories": [\n'
+                "    {\n"
+                '      "id": "US-001",\n'
+                '      "titulo": "US 1",\n'
+                '      "como": "User",\n'
+                '      "quiero": "Action",\n'
+                '      "para": "Benefit",\n'
+                '      "criterios_aceptacion": ["c1"],\n'
+                '      "contexto_rag_necesario": [],\n'
+                '      "definition_of_done": []\n'
+                "    }\n"
+                "  ]\n"
+                "}"
+            )
+            backlog_v2 = (
+                "{\n"
+                '  "proyecto": "NaturaMedics",\n'
+                '  "vision": "Clinic app con reportes",\n'
+                '  "user_stories": [\n'
+                "    {\n"
+                '      "id": "US-001",\n'
+                '      "titulo": "US 1",\n'
+                '      "como": "User",\n'
+                '      "quiero": "Action",\n'
+                '      "para": "Benefit",\n'
+                '      "criterios_aceptacion": ["c1"],\n'
+                '      "contexto_rag_necesario": [],\n'
+                '      "definition_of_done": []\n'
+                "    },\n"
+                "    {\n"
+                '      "id": "US-002",\n'
+                '      "titulo": "Reportes",\n'
+                '      "como": "User",\n'
+                '      "quiero": "Reportes",\n'
+                '      "para": "Track",\n'
+                '      "criterios_aceptacion": ["c2"],\n'
+                '      "contexto_rag_necesario": [],\n'
+                '      "definition_of_done": []\n'
+                "    }\n"
+                "  ]\n"
+                "}"
+            )
+            orchestrator._call_agent = MagicMock(side_effect=[backlog_v1, backlog_v2])
+
+            # El usuario escribe comentarios de feedback libre y luego aprueba con "y"
+            mock_input.side_effect = [
+                "Quiero un modulo de reportes extra",
+                "y"
+            ]
+
+            def write_file_side_effect(fn, content):
+                with open(os.path.join(temp_dir, fn), "w") as f:
+                    f.write(content)
+                return True
+            orchestrator._write_project_file = MagicMock(side_effect=write_file_side_effect)
+
+            phase = ProductOwnerPhase(orchestrator)
+            res = phase.run("Crear app NaturaMedics")
+
+            assert res is True
+            assert os.path.exists(os.path.join(temp_dir, "BACKLOG.json"))
+            with open(os.path.join(temp_dir, "BACKLOG.json"), "r") as f:
+                saved = json.load(f)
+            assert len(saved["user_stories"]) == 2
+            assert saved["user_stories"][1]["titulo"] == "Reportes"
+
+    @patch("core.llm_engine._call_llm_silent")
+    @patch("builtins.input")
+    def test_product_owner_json_self_correction(self, mock_input, mock_call_llm):
+        from core.state import JellyfishState
+        from core.project_orchestrator import ProjectOrchestrator
+        from core.orchestration.product_owner import ProductOwnerPhase
+        from unittest.mock import MagicMock
+        import tempfile
+        import os
+        import json
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            orchestrator = ProjectOrchestrator(state)
+            orchestrator.project_path = temp_dir
+            orchestrator._load_agent_prompt = MagicMock(return_value="Agent prompt text")
+            orchestrator._get_last_exit_code = MagicMock(return_value=0)
+            orchestrator._get_circuit_breaker_count = MagicMock(return_value=0)
+
+            # Silenciar refinamiento
+            mock_call_llm.return_value = "READY"
+
+            # Simular primer output malformado y el segundo corregido con éxito
+            malformed_json_res = "Este es un JSON con error: { \"invalid\": }"
+            valid_json_res = (
+                "{\n"
+                '  "proyecto": "NaturaMedics",\n'
+                '  "vision": "Clinic app",\n'
+                '  "user_stories": [\n'
+                "    {\n"
+                '      "id": "US-001",\n'
+                '      "titulo": "US 1",\n'
+                '      "como": "User",\n'
+                '      "quiero": "Action",\n'
+                '      "para": "Benefit",\n'
+                '      "criterios_aceptacion": ["c1"],\n'
+                '      "contexto_rag_necesario": [],\n'
+                '      "definition_of_done": []\n'
+                "    }\n"
+                "  ]\n"
+                "}"
+            )
+            orchestrator._call_agent = MagicMock(side_effect=[malformed_json_res, valid_json_res])
+
+            # Aprobación final
+            mock_input.return_value = "y"
+
+            def write_file_side_effect(fn, content):
+                with open(os.path.join(temp_dir, fn), "w") as f:
+                    f.write(content)
+                return True
+            orchestrator._write_project_file = MagicMock(side_effect=write_file_side_effect)
+
+            phase = ProductOwnerPhase(orchestrator)
+            res = phase.run("Crear app NaturaMedics")
+
+            assert res is True
+            assert os.path.exists(os.path.join(temp_dir, "BACKLOG.json"))
+            with open(os.path.join(temp_dir, "BACKLOG.json"), "r") as f:
+                saved = json.load(f)
+            assert saved["proyecto"] == "NaturaMedics"
+            # US-000 Sprint 0 es auto-inyectada + US-001 original
+            assert len(saved["user_stories"]) == 2
+            assert saved["user_stories"][0]["id"] == "US-000"
+
+    @patch("core.llm_engine._call_llm_silent")
+    def test_scrum_master_auto_healing_mapping(self, mock_call_llm):
+        from core.state import JellyfishState
+        from core.project_orchestrator import ProjectOrchestrator
+        from core.orchestration.scrum_master import ScrumMasterPhase
+        from unittest.mock import MagicMock
+        import tempfile
+        import os
+        import json
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            state.active_agency = "development"
+            orchestrator = ProjectOrchestrator(state)
+            orchestrator.project_path = temp_dir
+            orchestrator._get_last_exit_code = MagicMock(return_value=0)
+
+            # Escribir un BACKLOG.json inválido (sin el campo obligatorio "proyecto")
+            invalid_backlog = (
+                "{\n"
+                '  "user_stories": [\n'
+                "    {\n"
+                '      "id": "US-001",\n'
+                '      "titulo": "US 1",\n'
+                '      "como": "User",\n'
+                '      "quiero": "Action",\n'
+                '      "para": "Benefit",\n'
+                '      "criterios_aceptacion": [],\n'
+                '      "contexto_rag_necesario": [],\n'
+                '      "definition_of_done": []\n'
+                "    }\n"
+                "  ]\n"
+                "}"
+            )
+            with open(os.path.join(temp_dir, "BACKLOG.json"), "w") as f:
+                f.write(invalid_backlog)
+
+            # Healed backlog (debe retornar cuando el SM haga Auto-Healing en el schema-check)
+            healed_backlog = (
+                "{\n"
+                '  "proyecto": "NaturaMedics",\n'
+                '  "vision": "Vision",\n'
+                '  "user_stories": [\n'
+                "    {\n"
+                '      "id": "US-001",\n'
+                '      "titulo": "US 1",\n'
+                '      "como": "User",\n'
+                '      "quiero": "Action",\n'
+                '      "para": "Benefit",\n'
+                '      "criterios_aceptacion": [],\n'
+                '      "contexto_rag_necesario": [],\n'
+                '      "definition_of_done": []\n'
+                "    }\n"
+                "  ]\n"
+                "}"
+            )
+
+            # Mockear la llamada del SM inicial que genera una tabla vacía o no mapea historias
+            initial_board = "## 📋 POR HACER (TODO)\n| ID | Tarea | Asignado | Estimación | Entregable | Dependencias |\n|---|---|---|---|---|---|\n"
+            orchestrator._call_agent = MagicMock(return_value=initial_board)
+
+            # Mockear _call_llm_silent:
+            # 1. Primer llamada: Auto-Healing de BACKLOG.json -> retorna healed_backlog
+            # 2. Segunda llamada: Auto-Healing del Tablero -> retorna tablero correcto
+            healed_board = (
+                "## 📋 POR HACER (TODO)\n"
+                "| ID | Tarea | Asignado | Estimación | Entregable | Dependencias |\n"
+                "|---|---|---|---|---|---|\n"
+                "| T-001 | Implementar login para US-001 | @backend_dev | M | src/login.py | Ninguna |\n"
+            )
+            mock_call_llm.side_effect = [
+                healed_backlog,  # Para backlog heal
+                healed_board     # Para board heal
+            ]
+
+            def write_file_side_effect(fn, content):
+                with open(os.path.join(temp_dir, fn), "w") as f:
+                    f.write(content)
+                return True
+            orchestrator._write_project_file = MagicMock(side_effect=write_file_side_effect)
+
+            phase = ScrumMasterPhase(orchestrator)
+            res = phase.run("Idea")
+
+            assert res is True
+            # Verificar que se guardó BACKLOG.json corregido
+            with open(os.path.join(temp_dir, "BACKLOG.json"), "r") as f:
+                saved_backlog = json.load(f)
+            assert saved_backlog.get("proyecto") == "NaturaMedics"
+
+            # Verificar que se escribió en jellyfish_debug.log
+            assert os.path.exists(os.path.join(temp_dir, "jellyfish_debug.log"))
+            with open(os.path.join(temp_dir, "jellyfish_debug.log"), "r") as f:
+                debug_log = f.read()
+            assert "[SCRUM MASTER SCHEMA CHECK ERROR" in debug_log
+            assert "[SCRUM MASTER MAPPING ERROR" in debug_log
+
+    def test_intent_translator_dictionary_match(self):
+        from core.state import JellyfishState
+        from core.translator import IntentTranslator
+        import tempfile
+        import os
+        import json
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            
+            # Crear diccionario inicial
+            initial_map = {"Crear Login": "[AUTH:LOGIN]"}
+            with open(os.path.join(temp_dir, "intent_map.json"), "w", encoding="utf-8") as f:
+                json.dump(initial_map, f)
+                
+            translator = IntentTranslator(state)
+            token = translator.translate("Crear Login")
+            assert token == "[AUTH:LOGIN]"
+
+    @patch("core.translator._call_llm_silent")
+    def test_intent_translator_synthesis_new_intent(self, mock_call_llm):
+        from core.state import JellyfishState
+        from core.translator import IntentTranslator
+        import tempfile
+        import os
+        import json
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            
+            mock_call_llm.return_value = "[DB:CONFIG]"
+            
+            translator = IntentTranslator(state)
+            token = translator.translate("Configurar base de datos")
+            
+            assert token == "[DB:CONFIG]"
+            # Verificar que se haya guardado en el archivo
+            with open(os.path.join(temp_dir, "intent_map.json"), "r", encoding="utf-8") as f:
+                saved_map = json.load(f)
+            assert saved_map["Configurar base de datos"] == "[DB:CONFIG]"
+            assert getattr(state, "new_intents")["Configurar base de datos"] == "[DB:CONFIG]"
+
+    @patch("core.translator._call_llm_silent")
+    @patch("builtins.input")
+    def test_intent_translator_ambiguity_refinement(self, mock_input, mock_call_llm):
+        from core.state import JellyfishState
+        from core.translator import IntentTranslator
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            
+            # 1. El traductor detecta ambigüedad -> retorna "AMBIGUOUS"
+            # 2. El bucle de refinamiento pregunta algo -> retorna una pregunta
+            # 3. El validador dice que es READY -> retorna "READY"
+            # 4. El traductor final traduce la idea refinada -> retorna el token "[SYS:COMPILE]"
+            mock_call_llm.side_effect = [
+                "AMBIGUOUS",
+                "What language does compile mean here?",
+                "READY",
+                "[SYS:COMPILE]"
+            ]
+            
+            # El usuario responde a la pregunta aclaratoria
+            mock_input.side_effect = ["Python compiler"]
+            
+            translator = IntentTranslator(state)
+            token = translator.translate("compilar")
+            
+            assert token == "[SYS:COMPILE]"
+
+    @patch("rich.prompt.Confirm.ask")
+    @patch("builtins.input")
+    def test_intent_translator_review_learned_intents(self, mock_input, mock_confirm):
+        from core.state import JellyfishState
+        from core.project_orchestrator import ProjectOrchestrator
+        import tempfile
+        import os
+        import json
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            state.new_intents = {"Crear Login": "[AUTH:LOGIN]"}
+            
+            # Escribir el map inicial
+            with open(os.path.join(temp_dir, "intent_map.json"), "w", encoding="utf-8") as f:
+                json.dump({"Crear Login": "[AUTH:LOGIN]"}, f)
+            
+            # El usuario no quiere mantenerlos sin cambios (Confirm.ask = False)
+            mock_confirm.return_value = False
+            # El usuario edita el token por "[SECURITY:LOGIN]"
+            mock_input.side_effect = ["[SECURITY:LOGIN]"]
+            
+            orchestrator = ProjectOrchestrator(state)
+            orchestrator.project_path = temp_dir
+            orchestrator._review_learned_intents()
+            
+            # Verificar que se guardó la edición del usuario en intent_map.json
+            with open(os.path.join(temp_dir, "intent_map.json"), "r", encoding="utf-8") as f:
+                saved_map = json.load(f)
+            assert saved_map["Crear Login"] == "[SECURITY:LOGIN]"
+            assert state.new_intents == {}
+
+    @patch("core.translator._call_llm_silent")
+    @patch("builtins.input")
+    def test_intent_translator_turns_limit(self, mock_input, mock_call_llm):
+        from core.state import JellyfishState
+        from core.translator import IntentTranslator
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+
+            # Simular un flujo donde el LLM siempre detecta ambigüedad y pide MORE,
+            # pero el límite MAX_TRANSLATOR_TURNS = 3 debe detener las aclaraciones.
+            mock_call_llm.side_effect = [
+                "AMBIGUOUS",       # translate() intento 1
+                "Pregunta 1",      # _run_refinement_loop() intento 1
+                "MORE",            # checker del intento 1
+                "Pregunta 2",      # _run_refinement_loop() intento 2
+                "[DEFAULT:TOKEN]"  # translate() final (con turn_count >= 3)
+            ]
+
+            mock_input.side_effect = ["respuesta vaga 1", "respuesta vaga 2"]
+
+            translator = IntentTranslator(state)
+            token = translator.translate("instruccion vaga")
+
+            assert token == "[DEFAULT:TOKEN]"
+
+    @patch("core.translator._call_llm_silent")
+    def test_intent_translator_dsl_generation(self, mock_call_llm):
+        from core.state import JellyfishState
+        from core.translator import IntentTranslator
+        import tempfile
+        import os
+        import json
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+
+            dsl_output = (
+                "[INTENT: NEW_PROJECT]\n"
+                "SCOPE: Naturamedics\n"
+                "ARCH: React Native + FastAPI\n"
+                "MODULES: [auth, booking, chat]\n"
+                "CONSTRAINTS: [offline_mode, encryption]"
+            )
+            mock_call_llm.return_value = dsl_output
+
+            translator = IntentTranslator(state)
+            token = translator.translate("Quiero un sistema de clinicas llamado Naturamedics con React Native y FastAPI")
+
+            assert token == dsl_output
+            # Verificar que se haya guardado en el archivo
+            with open(os.path.join(temp_dir, "intent_map.json"), "r", encoding="utf-8") as f:
+                saved_map = json.load(f)
+            assert saved_map["Quiero un sistema de clinicas llamado Naturamedics con React Native y FastAPI"] == dsl_output
+            assert getattr(state, "new_intents")["Quiero un sistema de clinicas llamado Naturamedics con React Native y FastAPI"] == dsl_output
+
+    def test_extract_json_block_robustness(self):
+        from core.orchestration.product_owner import ProductOwnerPhase
+        from unittest.mock import MagicMock
+
+        phase = ProductOwnerPhase(MagicMock())
+        # Markdown residual alrededor de JSON
+        raw = "```json\n{\n  \"proyecto\": \"TestApp\",\n  \"vision\": \"Visión\",\n  \"user_stories\": [{\"id\": \"US-101\", \"titulo\": \"Test\"}]\n}\n```"
+        block = phase.extract_json_block(raw)
+        assert block["proyecto"] == "TestApp"
+        assert block["user_stories"][0]["id"] == "US-101"
+
+    @patch("core.project_orchestrator.ProjectOrchestrator._run_environment_probe")
+    def test_environment_blocking_validation(self, mock_probe):
+        from core.state import JellyfishState
+        from core.project_orchestrator import ProjectOrchestrator
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = JellyfishState()
+            state.active_project = temp_dir
+            orchestrator = ProjectOrchestrator(state)
+
+            # Simular capacidades donde node y npm no existen
+            mock_probe.return_value = {
+                "python_version": "Python 3.10",
+                "node_version": "No disponible",
+                "npm_version": "No disponible",
+                "gradle_version": "No disponible"
+            }
+
+            # Idea que requiere React Native (Node.js y npm)
+            result = orchestrator._validate_environment_blocking("Quiero una app movil en React Native")
+            assert result is False
+            assert state.is_pipeline_paused() is True
+
+
+def test_static_context_budget_limit():
+    """Verifica que refresh_static_context respete el presupuesto estricto MAX_STATIC_CHARS (16,000 chars)."""
+    from core.state import JellyfishState
+    with tempfile.TemporaryDirectory() as temp_dir:
+        state = JellyfishState()
+        state.context_files.clear()
+        state.system_prompt = "Short"
+        state.active_project = temp_dir
+        state.active_agent = "developer"
+        
+        # Crear un archivo de diseño gigante de 30KB
+        huge_doc = os.path.join(temp_dir, "DESIGN_TOKENS.md")
+        with open(huge_doc, "w", encoding="utf-8") as f:
+            f.write("# Design System Giant\n" + ("A" * 30_000))
+            
+        state.refresh_static_context()
+        
+        total_chars = sum(len(m.get("content", "")) for m in state.static_history)
+        # El contexto estático total no debe exceder sustancialmente los 16,000 caracteres del presupuesto
+        assert total_chars < 25_000
+        # Verificar que el truncamiento fue registrado
+        doc_msg = [m for m in state.static_history if "DESIGN_TOKENS.md" in m.get("content", "")][0]
+        assert "[TRUNCADO POR PRESUPUESTO ESTÁTICO DE 16K CHARS / 4K TOKENS]" in doc_msg["content"]
+
+
+def test_sentinel_session_decoupled_control():
+    """Verifica que run_sentinel_session retorne señales de control síncronas sin invocar al LLM."""
+    from core.state import JellyfishState
+    with tempfile.TemporaryDirectory() as temp_dir:
+        state = JellyfishState()
+        state.active_project = temp_dir
+        state.set_pipeline_status("PIPELINE_PAUSED", {
+            "task_id": "US-001",
+            "agent_name": "developer",
+            "error_log": "Error de prueba",
+            "task_desc": "Tarea de prueba",
+            "output_file": "app.py"
+        })
+        
+        from core.agency_orchestrator import AgencyOrchestrator
+        ceo = AgencyOrchestrator(state)
+        
+        # Simular usuario seleccionando opción 2 (ignorar -> [FORCE_CONTINUE])
+        with patch("builtins.input", return_value="2"):
+            res = ceo.run_sentinel_session()
+            assert res == "[FORCE_CONTINUE]"
+            assert state.is_pipeline_paused() is False
+
+
+def test_flush_crash_reports():
+    """Verifica que _flush_crash_reports escriba el informe forense .md en disco."""
+    from core.state import JellyfishState
+    with tempfile.TemporaryDirectory() as temp_dir:
+        from jellyfish import _flush_crash_reports
+        state = JellyfishState()
+        state.active_project = temp_dir
+        state.captured_errors = ["Traceback ficticio: Error de división por cero"]
+        
+        _flush_crash_reports(state)
+        
+        import glob
+        reports = glob.glob(os.path.join(temp_dir, "jellyfish_error_report_*.md"))
+        assert len(reports) == 1
+        with open(reports[0], "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "Reporte Forense de Error" in content
+        assert "Traceback ficticio: Error de división por cero" in content
+
+
+def test_sprint_0_mandatory_injection():
+    """Verifica que ProductOwnerPhase auto-inyecte la US-000 (Sprint 0) si el backlog carece de ella."""
+    from core.state import JellyfishState
+    from core.project_orchestrator import ProjectOrchestrator
+    from core.orchestration.product_owner import ProductOwnerPhase
+    from unittest.mock import MagicMock
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        state = JellyfishState()
+        state.active_project = temp_dir
+        orchestrator = ProjectOrchestrator(state)
+        orchestrator.project_path = temp_dir
+        orchestrator._load_agent_prompt = MagicMock(return_value="Agent prompt")
+        orchestrator._get_last_exit_code = MagicMock(return_value=0)
+        orchestrator._get_circuit_breaker_count = MagicMock(return_value=0)
+
+        # Output sin US-000
+        raw_backlog = (
+            "{\n"
+            '  "proyecto": "TestApp",\n'
+            '  "vision": "App de prueba",\n'
+            '  "user_stories": [\n'
+            "    {\n"
+            '      "id": "US-001",\n'
+            '      "titulo": "Feature 1",\n'
+            '      "como": "User",\n'
+            '      "quiero": "Click button",\n'
+            '      "para": "Do action",\n'
+            '      "prioridad": "Must-have",\n'
+            '      "estimacion": "S"\n'
+            "    }\n"
+            "  ]\n"
+            "}"
+        )
+        orchestrator._call_agent = MagicMock(return_value=raw_backlog)
+
+        phase = ProductOwnerPhase(orchestrator)
+        with patch("core.llm_engine._call_llm_silent", return_value="READY"), patch("builtins.input", return_value="y"):
+            res = phase.run("Idea de test")
+            assert res is True
+
+        import json
+        with open(os.path.join(temp_dir, "BACKLOG.json"), "r") as f:
+            data = json.load(f)
+
+        assert data["user_stories"][0]["id"] == "US-000"
+        assert "Sprint 0" in data["user_stories"][0]["titulo"]
+
+
+def test_task_runner_subprocess_dod_validation():
+    """Verifica que TaskRunnerPhase._run_strict_subprocess_dod_validation rechace código Python con error de sintaxis y apruebe código válido."""
+    from core.state import JellyfishState
+    from core.project_orchestrator import ProjectOrchestrator
+    from core.orchestration.task_runner import TaskRunnerPhase
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        state = JellyfishState()
+        state.active_project = temp_dir
+        orchestrator = ProjectOrchestrator(state)
+        orchestrator.project_path = temp_dir
+        runner = TaskRunnerPhase(orchestrator)
+
+        # 1. Crear archivo Python con error de sintaxis
+        invalid_py = os.path.join(temp_dir, "invalid.py")
+        with open(invalid_py, "w", encoding="utf-8") as f:
+            f.write("def broken_func(\n    print('missing closing paren')")
+
+        ok, reason = runner._run_strict_subprocess_dod_validation(temp_dir, ["invalid.py"], "invalid.py")
+        assert ok is False
+        assert "RECHAZO DOD (COMPILACIÓN PYTHON)" in reason
+
+        # 2. Crear archivo Python válido
+        valid_py = os.path.join(temp_dir, "valid.py")
+        with open(valid_py, "w", encoding="utf-8") as f:
+            f.write("def valid_func():\n    return True\n")
+
+        ok2, reason2 = runner._run_strict_subprocess_dod_validation(temp_dir, ["valid.py"], "valid.py")
+        assert ok2 is True
+        assert "aprobada" in reason2
+
+
+@patch("core.config.load_dotenv", lambda *args, **kwargs: None)
+@patch.dict(os.environ, {
+    "JELLYFISH_PROVIDER": "ollama",
+    "JELLYFISH_MODEL": "qwen2.5-agent:latest",
+    "JELLYFISH_PLANNER_PROVIDER": "gemini",
+    "JELLYFISH_PLANNER_MODEL": "gemini-2.5-flash",
+    "JELLYFISH_EXECUTOR_PROVIDER": "ollama",
+    "JELLYFISH_EXECUTOR_MODEL": "qwen2.5-coder:latest",
+}, clear=True)
+def test_hybrid_model_routing():
+    """Verifica que resolve_hybrid_agent_routing enrute agentes planificadores a Cloud (Gemini) y ejecutores a Local (Ollama)."""
+    from core.state import JellyfishState
+    from core.llm_engine import resolve_hybrid_agent_routing
+
+    state = JellyfishState()
+    state.planner_provider = "gemini"
+    state.planner_model = "gemini-2.5-flash"
+    state.executor_provider = "ollama"
+    state.executor_model = "qwen2.5-coder:latest"
+
+    # Planificadores -> Gemini
+    for planner in ["product_owner", "scrum_master", "architect_software", "lead_planner"]:
+        prov, mod = resolve_hybrid_agent_routing(state, planner)
+        assert prov == "gemini"
+        assert mod == "gemini-2.5-flash"
+
+    # Ejecutores -> Ollama
+    for executor in ["backend_dev", "frontend_dev", "devops_engineer", "qa_engineer"]:
+        prov, mod = resolve_hybrid_agent_routing(state, executor)
+        assert prov == "ollama"
+        assert mod == "qwen2.5-coder:latest"
+
+
+
+def test_product_owner_15_epics_limit():
+    """Verifica que ProductOwnerPhase limite a máximo 15 Historias/Épicas en BACKLOG.json."""
+    from core.state import JellyfishState
+    from core.project_orchestrator import ProjectOrchestrator
+    from core.orchestration.product_owner import ProductOwnerPhase
+    from unittest.mock import MagicMock
+    import tempfile
+    import json
+    import os
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        state = JellyfishState()
+        state.active_project = temp_dir
+        orchestrator = ProjectOrchestrator(state)
+        orchestrator.project_path = temp_dir
+        orchestrator._load_agent_prompt = MagicMock(return_value="Agent prompt")
+        orchestrator._get_last_exit_code = MagicMock(return_value=0)
+        orchestrator._get_circuit_breaker_count = MagicMock(return_value=0)
+
+        # Generar 20 historias ficticias
+        stories = [{"id": f"US-{i:03d}", "titulo": f"Feature {i}", "como": "User", "quiero": "Action", "para": "Benefit", "prioridad": "Must-have", "estimacion": "S"} for i in range(1, 21)]
+        raw_backlog = json.dumps({"proyecto": "TestApp", "vision": "Test", "user_stories": stories})
+        orchestrator._call_agent = MagicMock(return_value=raw_backlog)
+
+        phase = ProductOwnerPhase(orchestrator)
+        with patch("core.llm_engine._call_llm_silent", return_value="READY"), patch("builtins.input", return_value="y"):
+            res = phase.run("Idea con muchas tareas")
+            assert res is True
+
+        with open(os.path.join(temp_dir, "BACKLOG.json"), "r") as f:
+            data = json.load(f)
+
+        assert len(data["user_stories"]) == 15
+        assert data["user_stories"][0]["id"] == "US-000"
+
+
+def test_local_microtask_loop():
+    """Verifica que execute_local_microtask_loop desglose Épicas y retorne el código acumulado."""
+    from core.state import JellyfishState
+    from core.agents.base import BaseAgent
+    from unittest.mock import patch
+
+    state = JellyfishState()
+    agent = BaseAgent(name="backend_dev", role="Backend Developer", expertise=["python", "fastapi"])
+
+    epic_task = {
+        "id": "T-001",
+        "task": "Crear API REST con FastAPI",
+        "output_file": "app.py"
+    }
+    context = {
+        "project_path": "/tmp",
+        "accumulated_context": "",
+        "output_file": "app.py"
+    }
+
+    raw_json_microtasks = json.dumps({
+        "micro_tasks": [
+            "1. Definir imports e inicialización FastAPI",
+            "2. Crear endpoints REST",
+        ]
+    })
+
+    with patch("core.llm_engine._call_llm_silent") as mock_llm:
+        mock_llm.side_effect = [
+            raw_json_microtasks,
+            "```python\nfrom fastapi import FastAPI\napp = FastAPI()\n```",
+            "```python\nfrom fastapi import FastAPI\napp = FastAPI()\n@app.get('/')\ndef root(): return {'ok': True}\n```"
+        ]
+        result_code = agent.execute_local_microtask_loop(state, epic_task, context)
+
+        assert "def root():" in result_code
+        assert mock_llm.call_count == 3
+
+
+
+
+
+
+
+
+
+

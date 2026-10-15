@@ -11,13 +11,28 @@ venv/
 env/
 
 code_vector_db*/
+data/
 test_db/
 test_close_exists/
 memory/current_plan.json
 
-:~/
+*.log
+in.txt
+output.txt
+pytest_out.txt
+pytest_sentinel_out.txt
+
 dist/
 build/
 .next/
 .cache/
 .cache/models/
+
+# Database and Model files
+*.db
+jellyfish_state.db
+model.gguf
+
+# Web UI build output
+web-ui/dist/
+

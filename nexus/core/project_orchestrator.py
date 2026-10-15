@@ -1,0 +1,1604 @@
+"""Sprint 11 — Orquestador Autónomo con Scrum Team Dinámico.
+
+El Scrum Master escanea los agentes disponibles, arma el equipo ideal,
+asigna tareas en el SPRINT_BOARD.md, y el Task Runner ejecuta cada tarea
+invocando al agente correspondiente de forma autónoma.
+
+Pipeline Dinámico:
+    1. Product Owner  → BACKLOG.md   (checkpoint: aprobación del usuario)
+    2. Scrum Master   → SPRINT_BOARD.md (con asignación dinámica de agentes)
+    3. Task Runner    → Ejecuta cada tarea del tablero con el agente asignado
+"""
+
+import os
+import re
+import time
+import json
+import logging
+import sys
+from datetime import datetime
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.markdown import Markdown
+from rich.table import Table
+from rich.text import Text
+from rich.prompt import Confirm
+
+from core.state import JellyfishState, AGENCY_DIR, estimate_tokens
+from core.utils import _safe_read
+from core.llm_engine import _call_llm_silent
+from core.tui import tui_engine, TaskProgress
+from core.agents.registry import AgentRegistry
+
+logger = logging.getLogger("jellyfish.project_orchestrator")
+console = Console()
+
+class SilentExecutionRedirect:
+    """Context manager que redirige las consolas Rich a un archivo de log.
+    
+    Auditoría: Corregido para prevenir leak de file descriptors si __enter__
+    falla parcialmente (e.g. alguna consola no existe o no tiene .file).
+    """
+    def __init__(self, state):
+        self.state = state
+        self.log_file = None
+        self.old_files = {}
+
+    def __enter__(self):
+        proj_path = getattr(self.state, "active_project", None)
+        log_path = os.path.join(proj_path, "jellyfish_debug.log") if proj_path else "jellyfish_debug.log"
+        self.log_file = open(log_path, "a", encoding="utf-8")
+        
+        try:
+            from core.project_orchestrator import console as po_console
+            from core.terminal import console as term_console
+            from core.ui import console as ui_console
+            
+            self.consoles = [po_console, term_console, ui_console]
+            for c in self.consoles:
+                self.old_files[c] = c.file
+                c.file = self.log_file
+        except Exception:
+            # Si falla la asignación de consoles, cerrar el archivo y propagar
+            if self.log_file:
+                self.log_file.close()
+                self.log_file = None
+            raise
+            
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        for c in self.old_files:
+            try:
+                c.file = self.old_files[c]
+            except Exception:
+                # Fallback: restaurar a stdout si el archivo original ya no es válido
+                c.file = sys.stdout
+        if self.log_file:
+            try:
+                self.log_file.close()
+            except Exception:
+                pass
+
+# Agentes que son roles de gestión y NO deben asignarse a tareas de ejecución
+_MANAGEMENT_ROLES = {"product_owner", "scrum_master", "template", "researcher"}
+
+
+def _scan_available_agents(state: JellyfishState = None) -> list[dict]:
+    """Escanea agents/ y retorna nombre + primera línea de rol de cada uno.
+    
+    Sprint 12 — Prioriza agentes Python del AgentRegistry.
+    Los .md son fallback para agentes aún no migrados.
+    """
+    agents_dir = os.path.join(AGENCY_DIR, "agents")
+    agents = []
+    if not os.path.isdir(agents_dir):
+        return agents
+
+    if not AgentRegistry._scanned:
+        AgentRegistry.scan(agents_dir)
+
+    active_agency = "default"
+    allowed_agents = []
+    if state is not None:
+        active_agency = getattr(state, "active_agency", "default")
+        allowed_agents = state.agency_catalog.get(active_agency, [])
+        if not allowed_agents:
+            allowed_agents = state.agency_catalog.get("default", [])
+
+    seen_names = set()
+    
+    # 1. Agentes Python (.py) — prioridad
+    for name, agent_cls in AgentRegistry.list_agents().items():
+        if name in _MANAGEMENT_ROLES:
+            continue
+        if state is not None and name not in allowed_agents:
+            continue
+        agent_inst = agent_cls()
+        agents.append({
+            "name": name,
+            "file": f"{name}.py",
+            "role": agent_inst.role,
+            "expertise": getattr(agent_inst, "expertise", [])
+        })
+        seen_names.add(name)
+    
+    # 2. Agentes Markdown (.md) — fallback
+    for fname in sorted(os.listdir(agents_dir)):
+        if not fname.endswith(".md"):
+            continue
+        name = fname[:-3]  # quitar .md
+        if name in _MANAGEMENT_ROLES or name in seen_names:
+            continue
+        # Filtrar agentes permitidos si state está provisto
+        if state is not None and name not in allowed_agents:
+            continue
+        content = _safe_read(os.path.join(agents_dir, fname))
+        # Extraer la línea de ROL
+        role_line = ""
+        for line in content.split("\n"):
+            if line.strip().startswith("**ROL:**"):
+                role_line = line.strip().replace("**ROL:**", "").strip()
+                break
+        agents.append({"name": name, "file": fname, "role": role_line})
+    return agents
+
+
+def _parse_sprint_tasks(board_content: str) -> list[dict]:
+    """Parsea las tareas del tablero de forma defensiva y tolerante a variaciones."""
+    tasks = []
+    if not board_content:
+        return tasks
+
+    in_todo = False
+    lines = board_content.split("\n")
+    
+    # Pasada 1: Parseo con detección de encabezado
+    for line in lines:
+        stripped = line.strip()
+        
+        # Detectar inicio/fin de sección de tareas pendientes (tolerante a idiomas y formatos)
+        if stripped.startswith("#"):
+            clean_header = re.sub(r'[^\w\s]', ' ', stripped).upper()
+            is_todo_header = any(kw in clean_header for kw in ["TODO", "POR HACER", "PENDIENTE", "TRACK", "BACKLOG", "HACER", "SPRINT", "TABLERO", "BOARD", "TAREAS", "WORK", "PLAN"])
+            
+            if is_todo_header:
+                in_todo = True
+                continue
+            elif in_todo:
+                if stripped.startswith("##") or stripped.startswith("# "):
+                    break
+
+        if not in_todo or not stripped.startswith("|"):
+            continue
+
+        cells = [c.strip() for c in stripped.split("|")]
+        if cells and cells[0] == "":
+            cells.pop(0)
+        if cells and cells[-1] == "":
+            cells.pop()
+
+        if not cells or len(cells) < 2:
+            continue
+
+        if all(all(char in ('-', ':', ' ') for char in cell) for cell in cells if cell):
+            continue
+
+        col0_clean = re.sub(r'[^\w\s]', '', cells[0]).upper().strip()
+        col1_clean = re.sub(r'[^\w\s]', '', cells[1]).upper().strip() if len(cells) > 1 else ""
+        if col0_clean in ("ID", "TASK ID", "TASK_ID", "CODIGO", "CÓDIGO", "CODE") or \
+           col1_clean in ("TAREA", "TASK", "DESCRIPCION", "DESCRIPCIÓN", "DESCRIPTION"):
+            continue
+
+        if not cells[0] or cells[0] in ("—", "-", "") or (len(cells) > 1 and (not cells[1] or cells[1] in ("—", "-", ""))):
+            continue
+
+        task_id = cells[0].replace("*", "").replace("`", "").strip()
+        task_desc = cells[1].strip()
+        
+        agent_name = "default"
+        if len(cells) > 2:
+            agent_name = cells[2].lower().replace("@", "").replace("*", "").replace("`", "").strip()
+        if not agent_name:
+            agent_name = "default"
+            
+        estimate = "M"
+        output_file = "src/output.md"
+        dependencies = []
+        if len(cells) == 4:
+            output_file = cells[3].replace("`", "").replace("*", "").strip()
+        elif len(cells) == 5:
+            estimate = cells[3].replace("`", "").replace("*", "").strip()
+            output_file = cells[4].replace("`", "").replace("*", "").strip()
+        elif len(cells) >= 6:
+            estimate = cells[3].replace("`", "").replace("*", "").strip()
+            output_file = cells[4].replace("`", "").replace("*", "").strip()
+            dep_cell = cells[5].replace("`", "").replace("*", "").strip()
+            if dep_cell and dep_cell.lower() not in ("ninguna", "ninguno", "-", "none", ""):
+                dependencies = [d.strip().upper() for d in dep_cell.split(",") if d.strip()]
+            
+        if estimate and ("." in estimate or "/" in estimate or "\\" in estimate) and (not output_file or output_file == "src/output.md"):
+            output_file = estimate
+            estimate = "M"
+            
+        if not estimate:
+            estimate = "M"
+        if not output_file:
+            output_file = "src/output.md"
+
+        if task_id and task_desc:
+            tasks.append({
+                "id": task_id,
+                "task": task_desc,
+                "agent": agent_name,
+                "estimate": estimate,
+                "output_file": output_file,
+                "dependencies": dependencies,
+                "status": "TODO"
+            })
+
+    # Pasada 2: Si no se encontraron tareas por encabezado, escanear cualquier fila de tabla Markdown
+    if not tasks:
+        for line in lines:
+            stripped = line.strip()
+            if not stripped.startswith("|"):
+                continue
+            cells = [c.strip() for c in stripped.split("|")]
+            if cells and cells[0] == "":
+                cells.pop(0)
+            if cells and cells[-1] == "":
+                cells.pop()
+            if not cells or len(cells) < 2:
+                continue
+            if all(all(char in ('-', ':', ' ') for char in cell) for cell in cells if cell):
+                continue
+            col0_clean = re.sub(r'[^\w\s]', '', cells[0]).upper().strip()
+            if col0_clean in ("ID", "TASK ID", "TASK_ID", "CODIGO", "CÓDIGO", "CODE"):
+                continue
+            if not cells[0] or cells[0] in ("—", "-", "") or (len(cells) > 1 and (not cells[1] or cells[1] in ("—", "-", ""))):
+                continue
+            
+            task_id = cells[0].replace("*", "").replace("`", "").strip()
+            task_desc = cells[1].strip()
+            if task_id and task_desc and (task_id.startswith("T") or task_id.isdigit()):
+                agent_name = cells[2].lower().replace("@", "").replace("*", "").replace("`", "").strip() if len(cells) > 2 else "default"
+                estimate = cells[3].replace("`", "").replace("*", "").strip() if len(cells) > 3 else "M"
+                output_file = cells[4].replace("`", "").replace("*", "").strip() if len(cells) > 4 else "src/main.py"
+                tasks.append({
+                    "id": task_id,
+                    "task": task_desc,
+                    "agent": agent_name if agent_name else "default",
+                    "estimate": estimate if estimate else "M",
+                    "output_file": output_file if output_file else "src/main.py",
+                    "dependencies": [],
+                    "status": "TODO"
+                })
+
+    return tasks
+
+
+
+class ProjectOrchestrator:
+    """Orquestador Autónomo con Scrum Team Dinámico — Sprint 11.
+
+    Pipeline:
+        1. PO genera BACKLOG.md (con checkpoint de aprobación).
+        2. SM escanea agentes disponibles, arma equipo, genera SPRINT_BOARD.md
+           con tareas asignadas a agentes específicos.
+        3. Task Runner parsea el tablero y ejecuta cada tarea con el agente
+           asignado, pasando contexto acumulado.
+    """
+
+    def __init__(self, state: JellyfishState):
+        self.state = state
+        self.project_path = state.active_project
+        self.metrics: list[dict] = []
+        self.generated_files: list[str] = []
+
+    @property
+    def board_filename(self) -> str:
+        methodology = getattr(self.state, "project_methodology", "scrum").lower()
+        agency = getattr(self.state, "active_agency", "default")
+        
+        if methodology == "scrum":
+            return "SPRINT_BOARD.md"
+            
+        if agency == "development":
+            return "DEV_BOARD.md"
+        elif agency == "marketing":
+            return "MKT_BOARD.md"
+        elif agency == "research":
+            return "RESEARCH_BOARD.md"
+        else:
+            return "DEV_BOARD.md"
+
+    def _load_agent_prompt(self, agent_name: str) -> str:
+        """Carga el system prompt de un agente.
+        
+        Sprint 12 — Prioriza clase Python del AgentRegistry.
+        Si no existe, cae al archivo .md (retrocompatibilidad).
+        """
+        py_agent = AgentRegistry.get(agent_name)
+        if py_agent:
+            return py_agent.get_system_prompt()
+        filepath = os.path.join(AGENCY_DIR, "agents", f"{agent_name}.md")
+        return _safe_read(filepath)
+
+    def _read_project_file(self, filename: str) -> str:
+        """Lee un archivo del proyecto activo."""
+        filename_clean = filename.replace("`", "").strip()
+        return _safe_read(os.path.join(self.project_path, filename_clean))
+
+    def _write_project_file(self, filename: str, content: str) -> bool:
+        """Escribe un archivo al directorio del proyecto activo."""
+        filename_clean = filename.replace("`", "").strip()
+        filepath = os.path.join(self.project_path, filename_clean)
+        try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+            self.generated_files.append(filename_clean)
+            return True
+        except (OSError, IOError) as e:
+            logger.error("Error escribiendo %s: %s", filepath, e)
+            console.print(f"Error escribiendo {filename_clean}: {e}")
+            return False
+
+    def _call_agent(self, system_prompt: str, user_prompt: str, json_mode: bool = False, timeout: float | None = None, temperature: float | None = None, agent_name: str | None = None) -> str:
+        """Llama al LLM en modo silencioso garantizando enrutamiento híbrido según el rol del agente."""
+        if not agent_name and "# AGENTE: @" in system_prompt:
+            match = re.search(r'# AGENTE: @([A-Za-z0-9_]+)', system_prompt)
+            if match:
+                agent_name = match.group(1).lower()
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            response = _call_llm_silent(
+                self.state, messages,
+                agent_name=agent_name,
+                json_mode=json_mode,
+                timeout=timeout,
+                temperature=temperature,
+            )
+            if not response or not response.strip():
+                logger.error("⚠️ El agente %s retornó un output vacío.", agent_name or "desconocido")
+                return ""
+            return response
+        except Exception as e:
+            logger.error(f"❌ Excepción crítica en _call_agent para {self.state.model}: {str(e)}", exc_info=True)
+            return f"## 📋 ERROR DE PROCESAMIENTO\n\nOcurrió una excepción en el harness del agente: {str(e)}"
+
+    def _build_accumulated_context(self) -> str:
+        """Construye contexto con todos los archivos generados hasta ahora."""
+        parts = []
+        for fname in self.generated_files:
+            content = self._read_project_file(fname)
+            if content:
+                parts.append(f"--- {fname} ---\n{content}\n")
+        return "\n".join(parts)
+
+    # ─── FASE 0: Generación de Inteligencia del Proyecto ───────────────
+
+    def _generate_project_intelligence(self, user_idea: str) -> None:
+        """Auto-genera documentos de contexto técnico escaneando el proyecto real."""
+        import subprocess
+
+        console.print("\n━━━ FASE 0: 🧠 Generación de Inteligencia del Proyecto ━━━")
+        t0 = time.perf_counter()
+
+        # 1. PROJECT_TREE.md — Árbol de directorios real
+        try:
+            result = subprocess.run(
+                ["find", ".", "-maxdepth", "4", "-not", "-path", "./.git/*",
+                 "-not", "-path", "./.venv/*", "-not", "-path", "./venv/*",
+                 "-not", "-path", "./node_modules/*", "-not", "-path", "./__pycache__/*",
+                 "-not", "-name", "*.pyc"],
+                cwd=self.project_path, capture_output=True, text=True, timeout=10
+            )
+            tree_content = result.stdout.strip() if result.returncode == 0 else "No disponible"
+        except Exception:
+            tree_content = "No disponible"
+
+        self._write_project_file("PROJECT_TREE.md", (
+            "# 🌳 Árbol del Proyecto (Auto-generado)\n\n"
+            "```\n" + tree_content[:8000] + "\n```\n\n"
+            "*Auto-generado por Jellyfish OS. No editar manualmente.*\n"
+        ))
+
+        # 2. DESIGN_TOKENS.md — Extraído de ARCHITECTURE.md si existe
+        arch = self._read_project_file("ARCHITECTURE.md")
+        if arch:
+            tokens_prompt = (
+                "Eres un arquitecto de software senior. Lee el siguiente ARCHITECTURE.md y genera un resumen "
+                "ULTRA-COMPACTO (máximo 30 líneas) llamado DESIGN_TOKENS.md con SOLO:\n"
+                "- Stack tecnológico (frontend, backend, DB)\n"
+                "- Convenciones de carpetas (dónde va cada tipo de archivo)\n"
+                "- Patrones de diseño obligatorios\n"
+                "- Reglas de naming\n"
+                "NO repitas el ARCHITECTURE.md completo. Sé telegráfico."
+            )
+            tokens_result = self._call_agent(tokens_prompt, f"ARCHITECTURE.md:\n{arch[:6000]}")
+            self._write_project_file("DESIGN_TOKENS.md", tokens_result)
+        else:
+            self._write_project_file("DESIGN_TOKENS.md", "# 🎨 Design Tokens\n\nNo se detectó un archivo ARCHITECTURE.md inicial. Los agentes definirán los convenciones sobre la marcha.")
+
+        # 3. DATA_SCHEMA.md — Escanea modelos de datos existentes
+        schema_parts = []
+        for root, dirs, files in os.walk(self.project_path):
+            dirs[:] = [d for d in dirs if d not in ('.git', 'venv', '.venv', 'node_modules', '__pycache__')]
+            for f in files:
+                if f in ("models.py", "schema.prisma", "schema.sql", "models.js", "models.ts", "entities.py"):
+                    content = _safe_read(os.path.join(root, f))
+                    if content:
+                        rel = os.path.relpath(os.path.join(root, f), self.project_path)
+                        schema_parts.append(f"### {rel}\n```\n{content[:3000]}\n```\n")
+        if schema_parts:
+            self._write_project_file("DATA_SCHEMA.md", (
+                "# 📊 Esquema de Datos (Auto-generado)\n\n" + "\n".join(schema_parts) +
+                "\n*Auto-generado por Jellyfish OS.*\n"
+            ))
+        else:
+            self._write_project_file("DATA_SCHEMA.md", "# 📊 Esquema de Datos\n\nNo se detectaron modelos de datos iniciales. Los agentes actualizarán este archivo cuando creen la base de datos.")
+
+        # 3.5. COMPONENT_INDEX.md & DEPENDENCY_MANIFEST.md (Fallbacks)
+        if not os.path.isfile(os.path.join(self.project_path, "COMPONENT_INDEX.md")):
+            self._write_project_file("COMPONENT_INDEX.md", "# 🧩 Índice de Componentes\n\n(Archivo autogenerado vacío para uso de los agentes)")
+        if not os.path.isfile(os.path.join(self.project_path, "DEPENDENCY_MANIFEST.md")):
+            self._write_project_file("DEPENDENCY_MANIFEST.md", "# 📦 Manifiesto de Dependencias\n\n(Archivo autogenerado vacío para uso de los agentes)")
+
+        # 4. SECURITY.md — Guardrails de seguridad
+        security_path = os.path.join(self.project_path, "SECURITY.md")
+        if not os.path.isfile(security_path):
+            self._write_project_file("SECURITY.md", (
+                "# 🔒 Guardrails de Seguridad\n\n"
+                "## Reglas Obligatorias para Todo Agente\n"
+                "1. **NUNCA** hardcodear tokens, contraseñas, API keys o URIs de BD en el código.\n"
+                "   - Usar `os.getenv()` (Python) o `process.env` (Node.js).\n"
+                "2. **SIEMPRE** preparar consultas SQL con parámetros para evitar inyección.\n"
+                "3. **NUNCA** exponer stack traces en respuestas HTTP de producción.\n"
+                "4. **SIEMPRE** validar y sanitizar input del usuario antes de procesarlo.\n"
+                "5. **NUNCA** almacenar contraseñas en texto plano. Usar bcrypt o argon2.\n"
+                "6. **SIEMPRE** usar HTTPS para comunicaciones externas.\n"
+                "7. Tokens JWT deben tener expiración máxima de 24 horas.\n\n"
+                "*Archivo persistente. Editable por el usuario.*\n"
+            ))
+
+        # 5. COMPONENT_INDEX.md — Índice de componentes reutilizables
+        components = []
+        for root, dirs, files in os.walk(self.project_path):
+            dirs[:] = [d for d in dirs if d not in ('.git', 'venv', '.venv', 'node_modules', '__pycache__')]
+            for f in files:
+                if f.endswith(('.jsx', '.tsx', '.vue', '.svelte')):
+                    rel = os.path.relpath(os.path.join(root, f), self.project_path)
+                    components.append(f"- `{rel}`")
+                elif f.endswith('.py') and ('route' in f.lower() or 'view' in f.lower() or 'controller' in f.lower()):
+                    rel = os.path.relpath(os.path.join(root, f), self.project_path)
+                    components.append(f"- `{rel}`")
+        if components:
+            self._write_project_file("COMPONENT_INDEX.md", (
+                "# 🧩 Índice de Componentes (Auto-generado)\n\n"
+                "Archivos reutilizables detectados en el proyecto:\n\n"
+                + "\n".join(components[:50]) +
+                "\n\n*Antes de crear un componente nuevo, verifica si ya existe aquí.*\n"
+            ))
+
+        # 6. DEPENDENCY_MANIFEST.md — Librerías disponibles
+        dep_parts = []
+        for dep_file in ("requirements.txt", "package.json", "Pipfile", "pyproject.toml", "go.mod"):
+            content = self._read_project_file(dep_file)
+            if content:
+                dep_parts.append(f"### {dep_file}\n```\n{content[:2000]}\n```\n")
+            # Buscar en subcarpetas (frontend/, backend/)
+            for subdir in ("frontend", "backend"):
+                sub_path = os.path.join(self.project_path, subdir, dep_file)
+                if os.path.isfile(sub_path):
+                    content = _safe_read(sub_path)
+                    if content:
+                        dep_parts.append(f"### {subdir}/{dep_file}\n```\n{content[:2000]}\n```\n")
+        if dep_parts:
+            self._write_project_file("DEPENDENCY_MANIFEST.md", (
+                "# 📦 Dependencias del Proyecto (Auto-generado)\n\n"
+                "**REGLA:** Solo usa librerías que estén listadas aquí. "
+                "Si necesitas una nueva, indícalo explícitamente.\n\n"
+                + "\n".join(dep_parts) +
+                "\n*Auto-generado por Jellyfish OS.*\n"
+            ))
+
+        # 7. PLAYBOOK.md — Solo se crea vacío si no existe (se llena con retrospectivas)
+        playbook_path = os.path.join(self.project_path, "PLAYBOOK.md")
+        if not os.path.isfile(playbook_path):
+            # Cargar reglas de retrospectivas anteriores si existen
+            retro_path = os.path.join(AGENCY_DIR, "memory", "retrospective_rules.md")
+            retro_content = _safe_read(retro_path) if os.path.isfile(retro_path) else ""
+            self._write_project_file("PLAYBOOK.md", (
+                "# 📖 Playbook de Soluciones Conocidas\n\n"
+                "## Lecciones de Sprints Anteriores\n"
+                + (retro_content if retro_content else "_(Ninguna todavía)_\n") +
+                "\n## Soluciones a Errores Frecuentes\n"
+                "_(Se actualizará automáticamente tras cada retrospectiva)_\n"
+            ))
+
+        # 8. BUSINESS_CONTEXT.md — Contexto de negocio extraído de la idea del usuario
+        biz_path = os.path.join(self.project_path, "BUSINESS_CONTEXT.md")
+        if not os.path.isfile(biz_path):
+            biz_prompt = (
+                "Genera un BUSINESS_CONTEXT.md de MÁXIMO 10 líneas que responda:\n"
+                "1. ¿Para quién es esta app? (usuario final)\n"
+                "2. ¿Qué problema resuelve?\n"
+                "3. ¿Qué tono de UI se espera? (formal, casual, técnico)\n"
+                "Sé telegráfico. Solo Markdown limpio."
+            )
+            biz_result = self._call_agent(biz_prompt, f"Idea del usuario: {user_idea}")
+            self._write_project_file("BUSINESS_CONTEXT.md", biz_result)
+
+        elapsed = time.perf_counter() - t0
+        intel_files = [f for f in ["PROJECT_TREE.md", "DESIGN_TOKENS.md", "DATA_SCHEMA.md",
+                                    "SECURITY.md", "COMPONENT_INDEX.md", "DEPENDENCY_MANIFEST.md",
+                                    "PLAYBOOK.md", "BUSINESS_CONTEXT.md"] if os.path.isfile(os.path.join(self.project_path, f))]
+        console.print(f"✓ Inteligencia del proyecto generada: {len(intel_files)} documentos ({elapsed:.1f}s)")
+        self.metrics.append({
+            "fase": "🧠 Inteligencia", "detalle": f"{len(intel_files)} docs generados",
+            "tiempo": elapsed, "status": "✅",
+        })
+
+    # ─── FASE ÚNICA (Sprint 14): Mega-Agente Planificador ─────────────────
+
+    def _run_mega_planner(self, user_idea: str) -> bool:
+        """Sprint 14 — Consolida PO + DoR + SM en 2 llamadas LLM máximas.
+
+        Reemplaza la cascada: Translator → CEO → PO (refinamiento + backlog) → Scrum Master.
+        Los artefactos físicos (BACKLOG.json/md, ARCHITECTURE.md, SPRINT_BOARD.md/json)
+        se generan con Python puro sin consumir cuota adicional del LLM.
+        """
+        from core.orchestration.mega_planner import MegaPlannerPhase
+        return MegaPlannerPhase(self).run(user_idea)
+
+    # ─── FASE 1: Product Owner (modo /project manual) ────────────────────
+
+    def _run_product_owner(self, user_idea: str) -> bool:
+        """Genera BACKLOG.md y solicita aprobación del usuario."""
+        from core.orchestration.product_owner import ProductOwnerPhase
+        return ProductOwnerPhase(self).run(user_idea)
+
+    # ─── FASE 2: Scrum Master (modo /project manual) ─────────────────────
+
+    def _run_scrum_master(self, user_idea: str) -> bool:
+        """SM escanea agentes, arma equipo y genera el tablero correspondiente a la agencia."""
+        from core.orchestration.scrum_master import ScrumMasterPhase
+        return ScrumMasterPhase(self).run(user_idea)
+
+    def check_scrum_health(self) -> dict:
+        """Sintetiza el diagnóstico de salud del proyecto Scrum."""
+        from core.orchestration.scrum_health import ScrumHealthMonitor
+        monitor = ScrumHealthMonitor(self.project_path)
+        return monitor.diagnose()
+
+    # ─── FASE 3: Task Runner (Ejecución Dinámica) ──────────────────────
+
+    def _run_environment_probe(self) -> dict:
+        """Ejecuta comandos de diagnóstico en la terminal para identificar capacidades del sistema.
+        Guarda los resultados en env_capabilities.json con cacheo.
+        """
+        cap_path = os.path.join(self.project_path, "env_capabilities.json")
+        if os.path.isfile(cap_path):
+            try:
+                import time
+                mtime = os.path.getmtime(cap_path)
+                if (time.time() - mtime) < 86400: # 24 horas de validez de caché
+                    with open(cap_path, "r", encoding="utf-8") as f:
+                        capabilities = json.load(f)
+                    console.print("✓ Capacidades del sistema cargadas desde caché (env_capabilities.json)")
+                    return capabilities
+            except Exception as e:
+                logger.warning("Error leyendo caché de capacidades: %s. Re-ejecutando diagnóstico.", e)
+
+        console.print("\n🔍 Ejecutando Agente Validador del Entorno (Environment Probe)...")
+        capabilities = {}
+        
+        commands = {
+            "python_version": "python3 --version",
+            "java_version": "java -version",
+            "docker_version": "docker --version",
+            "docker_compose_version": "docker compose version || docker-compose --version",
+            "gradle_version": "gradle --version",
+            "node_version": "node --version",
+            "npm_version": "npm --version",
+            "git_version": "git --version",
+            "gcc_version": "gcc --version",
+            "gpp_version": "g++ --version",
+            "cmake_version": "cmake --version"
+        }
+        
+        import subprocess
+        for key, cmd in commands.items():
+            try:
+                res = subprocess.run(
+                    ["bash", "-c", cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5
+                )
+                output = (res.stdout.strip() + "\n" + res.stderr.strip()).strip()
+                if res.returncode == 0 and output:
+                    first_line = output.split('\n')[0].strip()
+                    capabilities[key] = first_line
+                elif output:
+                    first_line = output.split('\n')[0].strip()
+                    capabilities[key] = first_line
+                else:
+                    capabilities[key] = "No disponible"
+            except Exception:
+                capabilities[key] = "No disponible"
+                
+        try:
+            with open(cap_path, "w", encoding="utf-8") as f:
+                json.dump(capabilities, f, indent=2)
+            console.print(f"✓ Capacidades del sistema guardadas en env_capabilities.json")
+        except Exception as e:
+            logger.error("Error escribiendo env_capabilities.json: %s", e)
+            
+        return capabilities
+
+    def _validate_environment_blocking(self, user_idea: str) -> bool:
+        """Valida que el sistema operativo cuente con los binarios necesarios para el stack solicitado.
+        
+        Si faltan herramientas requeridas (ej: Node.js, npm, Gradle), detiene la orquestación,
+        registra un [IMPEDIMENTO CRÍTICO] y notifica al usuario.
+        """
+        import shutil
+        capabilities = self._run_environment_probe()
+
+        context_sources = [user_idea.lower()]
+        design_tokens = self._read_project_file("DESIGN_TOKENS.md")
+        if design_tokens:
+            context_sources.append(design_tokens.lower())
+        architecture = self._read_project_file("ARCHITECTURE.md")
+        if architecture:
+            context_sources.append(architecture.lower())
+        backlog_json = self._read_project_file("BACKLOG.json")
+        if backlog_json:
+            context_sources.append(backlog_json.lower())
+
+        full_context = "\n".join(context_sources)
+
+        missing_binaries = []
+
+        def _is_cap_available(cap_key: str, binary_name: str) -> bool:
+            if cap_key in capabilities:
+                val = capabilities[cap_key]
+                return val is not None and val != "No disponible"
+            return shutil.which(binary_name) is not None
+
+        # 1. Validación de Node.js / npm
+        node_keywords = [
+            "react", "react native", "react-native", "vue", "next", "next.js",
+            "node", "nodejs", "express", "vite", "typescript", "javascript",
+            "npm", "yarn", "pnpm"
+        ]
+        requires_node = any(kw in full_context for kw in node_keywords)
+        if requires_node:
+            node_available = _is_cap_available("node_version", "node")
+            npm_available = _is_cap_available("npm_version", "npm")
+            if not node_available and "node" not in missing_binaries:
+                missing_binaries.append("node")
+            if not npm_available and "npm" not in missing_binaries:
+                missing_binaries.append("npm")
+
+        # 2. Validación de Gradle / Java (Android)
+        gradle_keywords = [
+            "gradle", "android", "apk", "aar", "kotlin", "react native android"
+        ]
+        requires_gradle = any(kw in full_context for kw in gradle_keywords)
+        if requires_gradle:
+            gradlew_exists = os.path.isfile(os.path.join(self.project_path, "gradlew"))
+            gradle_available = _is_cap_available("gradle_version", "gradle") or gradlew_exists
+            if not gradle_available and "gradle" not in missing_binaries:
+                missing_binaries.append("gradle")
+
+        # 3. Validación de Docker
+        docker_keywords = ["docker-compose", "dockerfile", "contenedor docker", "despliegue docker"]
+        requires_docker = any(kw in full_context for kw in docker_keywords)
+        if requires_docker:
+            docker_available = _is_cap_available("docker_version", "docker")
+            if not docker_available and "docker" not in missing_binaries:
+                missing_binaries.append("docker")
+
+        # 4. Validación de C++ / CMake
+        cpp_keywords = ["c++", "cpp", "cmake", "qt6", "qt", "gcc", "g++", "cmakelists.txt"]
+        requires_cpp = any(kw in full_context for kw in cpp_keywords) or os.path.isfile(os.path.join(self.project_path, "CMakeLists.txt"))
+        if requires_cpp:
+            gpp_available = _is_cap_available("gpp_version", "g++") or (shutil.which("gcc") is not None)
+            cmake_available = _is_cap_available("cmake_version", "cmake")
+            if not gpp_available and "g++" not in missing_binaries:
+                missing_binaries.append("g++")
+            if not cmake_available and "cmake" not in missing_binaries:
+                missing_binaries.append("cmake")
+
+        if missing_binaries:
+            from rich.panel import Panel
+            missing_str = ", ".join(missing_binaries)
+            error_msg = (
+                f"[bold red]❌ [IMPEDIMENTO CRÍTICO] Binarios faltantes en el Sistema Operativo[/bold red]\n\n"
+                f"El requerimiento técnico del proyecto exige las siguientes herramientas: [bold yellow]{missing_str}[/bold yellow], "
+                f"pero los comandos correspondientes no fueron encontrados en la variable PATH del sistema operativo.\n\n"
+                f"Por favor, instala la(s) herramienta(s) en el SO ({missing_str}) y vuelve a ejecutar el pipeline."
+            )
+            console.print("\n" + "=" * 80)
+            console.print(Panel(error_msg, title="[bold red]🚨 DETENCIÓN POR IMPEDIMENTO CRÍTICO DE ENTORNO[/bold red]", border_style="red"))
+            console.print("=" * 80 + "\n")
+            
+            logger.error("[IMPEDIMENTO CRÍTICO] Stack inalcanzable. Binarios faltantes: %s", missing_binaries)
+            self.state.set_pipeline_status("PIPELINE_PAUSED", {
+                "task_id": "ENV-VALIDATION-001",
+                "agent_name": "devops_engineer",
+                "error_log": f"[IMPEDIMENTO CRÍTICO] Falta(n) binario(s) en el SO: {missing_str}",
+                "task_desc": "Validación de capacidades del entorno",
+                "output_file": "env_capabilities.json"
+            })
+            self.metrics.append({
+                "fase": "🔍 Validación Entorno",
+                "detalle": f"[IMPEDIMENTO CRÍTICO] Faltan: {missing_str}",
+                "tiempo": 0.1,
+                "status": "❌"
+            })
+            return False
+
+        return True
+
+    def _detect_compile_command(self) -> str:
+        """Detecta el comando de compilación o verificación para el proyecto activo."""
+        if not self.project_path or not os.path.isdir(self.project_path):
+            return ""
+        
+        docker_android_yml = os.path.join(self.project_path, "docker-compose.android.yml")
+        if os.path.isfile(docker_android_yml):
+            return "docker compose -f docker-compose.android.yml run --rm android-builder ./gradlew assembleDebug --no-daemon"
+            
+        docker_yml = os.path.join(self.project_path, "docker-compose.yml")
+        if os.path.isfile(docker_yml):
+            services_to_build = []
+            try:
+                import yaml
+                with open(docker_yml, "r", encoding="utf-8") as f:
+                    dc_data = yaml.safe_load(f)
+                
+                if dc_data and isinstance(dc_data, dict) and "services" in dc_data:
+                    for s_name, s_config in dc_data["services"].items():
+                        if not isinstance(s_config, dict):
+                            continue
+                        build_conf = s_config.get("build")
+                        if not build_conf:
+                            continue
+                        
+                        context_dir = None
+                        dockerfile_name = "Dockerfile"
+                        if isinstance(build_conf, str):
+                            context_dir = build_conf
+                        elif isinstance(build_conf, dict):
+                            context_dir = build_conf.get("context")
+                            dockerfile_name = build_conf.get("dockerfile", "Dockerfile")
+                        
+                        if context_dir:
+                            abs_context = os.path.normpath(os.path.join(self.project_path, context_dir))
+                            abs_dockerfile = os.path.join(abs_context, dockerfile_name)
+                            if os.path.isfile(abs_dockerfile):
+                                with open(abs_dockerfile, "r", encoding="utf-8") as df:
+                                    df_content = df.read()
+                                if "Placeholder generated by Jellyfish" not in df_content:
+                                    services_to_build.append(s_name)
+            except Exception as e:
+                logger.error("Error al detectar servicios activos para docker compose: %s", e)
+            
+            if services_to_build:
+                return f"docker compose build {' '.join(services_to_build)}"
+            return "docker compose config"
+            
+        cmake_lists = os.path.join(self.project_path, "CMakeLists.txt")
+        if os.path.isfile(cmake_lists):
+            return "cmake -B build -S . && cmake --build build"
+            
+        gradlew = os.path.join(self.project_path, "gradlew")
+        if os.path.isfile(gradlew):
+            return "./gradlew assembleDebug --no-daemon"
+            
+        package_json = os.path.join(self.project_path, "package.json")
+        if os.path.isfile(package_json):
+            return "npm run build"
+            
+        # Validar si existe subdirectorio frontend con package.json
+        frontend_pkg = os.path.join(self.project_path, "frontend", "package.json")
+        if os.path.isfile(frontend_pkg):
+            return "cd frontend && npm run build && cd .. && python3 -m compileall -q ."
+            
+        has_python = False
+        for root, dirs, files in os.walk(self.project_path):
+            dirs[:] = [d for d in dirs if d not in ('.git', 'venv', '.venv', 'node_modules')]
+            for f in files:
+                if f.endswith('.py') or f in ('requirements.txt', 'pyproject.toml', 'setup.py'):
+                    has_python = True
+                    break
+            if has_python:
+                break
+                
+        if has_python:
+            frontend_dir = os.path.join(self.project_path, "frontend")
+            if os.path.isdir(frontend_dir):
+                return "python3 -m compileall -q . && [ -d frontend/src ] && echo 'Validando frontend...' && [ \"$(ls -A frontend/src)\" ]"
+            return "python3 -m compileall -q ."
+            
+        return ""
+
+    def _extract_relevant_errors(self, build_output: str) -> str:
+        """Extrae las líneas de error más relevantes de la salida de compilación."""
+        if not build_output:
+            return "Sin salida de error."
+            
+        lines = build_output.split('\n')
+        relevant_lines = []
+        error_keywords = ["error:", "failed", "exception", "caused by:", "unresolved reference", "e:", "w:", "kapt"]
+        
+        for line in lines:
+            if any(kw in line.lower() for kw in error_keywords):
+                relevant_lines.append(line)
+                
+        if not relevant_lines:
+            return "\n".join(lines[-30:])
+            
+        return "\n".join(relevant_lines[-40:])
+
+    def _run_build_command(self, cmd: str) -> tuple[int, str]:
+        """Ejecuta el comando de compilación en el directorio del proyecto y captura salida/código de salida."""
+        from core.terminal import run_terminal_command
+        console.print(f"\n       🛠 Solicitando ejecución de comando de compilación: {cmd}")
+        
+        ret_dict = {'returncode': 0}
+        output = run_terminal_command(
+            cmd,
+            self.state,
+            silent_history=True,
+            timeout=300,
+            force_confirm=True,
+            return_code_dict=ret_dict
+        )
+        
+        returncode = ret_dict['returncode']
+        if returncode != 0:
+            # Interceptación de error y disparo del Bucle de Auto-Recuperación (Auto-Healing Loop)
+            returncode, output = self._auto_heal_build_error(cmd, returncode, output)
+            
+        if returncode != 0:
+            if not hasattr(self.state, "captured_errors"):
+                self.state.captured_errors = []
+            self.state.captured_errors.append(
+                f"Fallo de compilación en el comando '{cmd}'. Código de retorno: {returncode}.\n"
+                f"Salida del error:\n{output}"
+            )
+            
+        # Persistir el código de retorno y el circuit breaker
+        self._update_circuit_breaker(returncode)
+        
+        exit_code_path = os.path.join(self.project_path, ".jellyfish_last_exit_code")
+        try:
+            with open(exit_code_path, "w", encoding="utf-8") as f:
+                f.write(str(returncode))
+        except Exception as e:
+            logger.error("Error persistiendo last_exit_code: %s", e)
+            
+        return returncode, output
+
+    def _classify_build_error(self, output: str) -> str:
+        """Clasifica el error de compilación para guiar al Auto-Healing."""
+        from core.orchestration.build_healer import classify_build_error
+        return classify_build_error(output)
+
+    def _is_safe_healing_command(self, cmd: str) -> bool:
+        """Verifica si un comando del auto-healing es seguro (control de blast radius)."""
+        from core.orchestration.build_healer import is_safe_healing_command
+        return is_safe_healing_command(cmd)
+
+    def _auto_heal_build_error(self, cmd: str, returncode: int, build_output: str) -> tuple[int, str]:
+        """Bucle Autónomo de Resolución de Errores (Auto-Healing Loop) con un máximo de 3 iteraciones."""
+        from core.orchestration.build_healer import auto_heal_build_error
+        return auto_heal_build_error(self, cmd, returncode, build_output)
+
+    def _get_last_exit_code(self) -> int:
+        """Obtiene el último exit_code persistido del proyecto o 0 por defecto."""
+        exit_code_path = os.path.join(self.project_path, ".jellyfish_last_exit_code")
+        if os.path.isfile(exit_code_path):
+            try:
+                with open(exit_code_path, "r", encoding="utf-8") as f:
+                    return int(f.read().strip())
+            except Exception:
+                pass
+        return 0
+
+    def _get_circuit_breaker_count(self) -> int:
+        cb_path = os.path.join(self.project_path, ".jellyfish_circuit_breaker")
+        if os.path.isfile(cb_path):
+            try:
+                with open(cb_path, "r", encoding="utf-8") as f:
+                    return int(f.read().strip())
+            except Exception:
+                pass
+        return 0
+
+    def _reset_circuit_breaker(self) -> None:
+        cb_path = os.path.join(self.project_path, ".jellyfish_circuit_breaker")
+        exit_code_path = os.path.join(self.project_path, ".jellyfish_last_exit_code")
+        for path in (cb_path, exit_code_path):
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+
+    def _update_circuit_breaker(self, returncode: int) -> None:
+        cb_path = os.path.join(self.project_path, ".jellyfish_circuit_breaker")
+        if returncode == 0:
+            count = 0
+        else:
+            count = self._get_circuit_breaker_count() + 1
+        try:
+            with open(cb_path, "w", encoding="utf-8") as f:
+                f.write(str(count))
+        except Exception:
+            pass
+
+    def _extract_and_write_files(self, content: str) -> list[str]:
+        """Extrae y escribe en disco los archivos de código real desde el contenido generado."""
+        from core.orchestration.file_writer import extract_and_write_files
+        return extract_and_write_files(self.project_path, content)
+
+    def _run_task_runner(self, user_idea: str) -> None:
+        """Parsea el tablero de la agencia y ejecuta cada tarea con su agente asignado."""
+        from core.orchestration.task_runner import TaskRunnerPhase
+        TaskRunnerPhase(self).run(user_idea)
+
+    def _write_task_handoff_with_status(self, task_id: str, agent: str, desc: str, output: str, status: str) -> None:
+        """Registra un handoff en DAILY.md con el estado de compilación para trazabilidad."""
+        daily_path = os.path.join(self.project_path, "DAILY.md")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        entry = (
+            f"\n### [{timestamp}] @{agent} — {task_id}\n"
+            f"**Tarea:** {desc}\n"
+            f"**Archivo generado:** `{output}`\n"
+            f"**Estado:** {status}\n\n"
+        )
+        try:
+            existing = _safe_read(daily_path)
+            with open(daily_path, "w", encoding="utf-8") as f:
+                f.write(existing + entry)
+        except (OSError, IOError) as e:
+            logger.warning("No se pudo actualizar DAILY.md: %s", e)
+
+    def _mark_all_done(self, tasks: list[dict]) -> None:
+        """Mueve todas las tareas a la sección DONE del tablero de la agencia vaciando las anteriores."""
+        board = self._read_project_file(self.board_filename)
+        if not board:
+            return
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        done_rows = "\n".join(
+            f"| {t.get('id', '')} | {t.get('task', '')} | @{t.get('agent', '')} | {timestamp} |"
+            for t in tasks
+        )
+        
+        # 1. Vaciar las tablas de POR HACER y EN PROGRESO dejando solo sus cabeceras
+        board = re.sub(r'(##.*?(?:POR HACER|TODO).*?\n\|.*?\n\|[-\s|]*\n)(?:\|.*?\n)*', r'\1', board, flags=re.IGNORECASE)
+        board = re.sub(r'(##.*?(?:EN PROGRESO|IN PROGRESS|DOING).*?\n\|.*?\n\|[-\s|]*\n)(?:\|.*?\n)*', r'\1', board, flags=re.IGNORECASE)
+
+        # 2. Reconstruir la sección DONE
+        done_section = (
+            f"## ✅ HECHO (DONE)\n\n"
+            f"| ID | Tarea | Asignado | Completado |\n"
+            f"|---|---|---|---|\n"
+            f"{done_rows}\n"
+        )
+        
+        # 3. Insertar o reemplazar la sección DONE actual
+        pattern = r"##\s*(?:✅\s*)?(?:HECHO|DONE|Completadas|Completado).*?(?=\n##|\n---|\n\*|$)"
+        if re.search(pattern, board, flags=re.IGNORECASE | re.DOTALL):
+            new_board = re.sub(pattern, done_section, board, flags=re.IGNORECASE | re.DOTALL)
+        else:
+            new_board = board.strip() + "\n\n" + done_section
+            
+        self._write_project_file(self.board_filename, new_board)
+
+        # Actualizar versión JSON (Mejora 11)
+        try:
+            import json
+            json_filename = self.board_filename.replace(".md", ".json")
+            json_path = os.path.join(self.project_path, json_filename)
+            if os.path.isfile(json_path):
+                for t in tasks:
+                    t["status"] = "DONE"
+                    t["completed_at"] = timestamp
+                self._write_project_file(json_filename, json.dumps(tasks, indent=2, ensure_ascii=False))
+        except Exception as je:
+            logger.warning("No se pudo actualizar el tablero JSON a DONE: %s", je)
+
+    def _save_board(self, tasks: list[dict]) -> None:
+        """Guarda el estado actual de las tareas en los formatos JSON y Markdown del tablero."""
+        # 1. Actualizar versión JSON
+        try:
+            import json
+            json_filename = self.board_filename.replace(".md", ".json")
+            self._write_project_file(json_filename, json.dumps(tasks, indent=2, ensure_ascii=False))
+        except Exception as je:
+            logger.warning("No se pudo guardar el tablero JSON: %s", je)
+
+        # 2. Sincronizar versión Markdown
+        try:
+            board = self._read_project_file(self.board_filename)
+            if board:
+                todo_tasks = [t for t in tasks if t.get("status") not in ("DONE", "HECHO") and t.get("state") not in ("DONE", "HECHO")]
+                done_tasks = [t for t in tasks if t.get("status") in ("DONE", "HECHO") or t.get("state") in ("DONE", "HECHO")]
+                
+                todo_rows = "\n".join(
+                    f"| {t.get('id', '')} | {t.get('task', '')} | @{t.get('agent', '')} | Pendiente |"
+                    for t in todo_tasks
+                )
+                done_rows = "\n".join(
+                    f"| {t.get('id', '')} | {t.get('task', '')} | @{t.get('agent', '')} | {t.get('completed_at', 'Completado')} |"
+                    for t in done_tasks
+                )
+                
+                # Reconstruir sección TODO
+                todo_section = (
+                    f"## 📋 POR HACER (TODO)\n\n"
+                    f"| ID | Tarea | Asignado | Estado |\n"
+                    f"|---|---|---|---|\n"
+                    f"{todo_rows}\n"
+                )
+                
+                # Vaciar EN PROGRESO
+                doing_section = (
+                    f"## ⏳ EN PROGRESO (DOING)\n\n"
+                    f"| ID | Tarea | Asignado | Progreso |\n"
+                    f"|---|---|---|---|\n"
+                )
+                
+                # Reconstruir sección DONE
+                done_section = (
+                    f"## ✅ HECHO (DONE)\n\n"
+                    f"| ID | Tarea | Asignado | Completado |\n"
+                    f"|---|---|---|---|\n"
+                    f"{done_rows}\n"
+                )
+                
+                # Reemplazar secciones usando regex
+                pattern_todo = r"##\s*(?:📋\s*)?(?:POR HACER|TODO).*?(?=\n##|\n---|\n\*|$)"
+                if re.search(pattern_todo, board, flags=re.IGNORECASE | re.DOTALL):
+                    board = re.sub(pattern_todo, todo_section, board, flags=re.IGNORECASE | re.DOTALL)
+                    
+                pattern_doing = r"##\s*(?:⏳\s*)?(?:EN PROGRESO|IN PROGRESS|DOING).*?(?=\n##|\n---|\n\*|$)"
+                if re.search(pattern_doing, board, flags=re.IGNORECASE | re.DOTALL):
+                    board = re.sub(pattern_doing, doing_section, board, flags=re.IGNORECASE | re.DOTALL)
+                    
+                pattern_done = r"##\s*(?:✅\s*)?(?:HECHO|DONE|Completadas|Completado).*?(?=\n##|\n---|\n\*|$)"
+                if re.search(pattern_done, board, flags=re.IGNORECASE | re.DOTALL):
+                    board = re.sub(pattern_done, done_section, board, flags=re.IGNORECASE | re.DOTALL)
+                else:
+                    board = board.strip() + "\n\n" + done_section
+                    
+                self._write_project_file(self.board_filename, board)
+        except Exception as me:
+            logger.warning("No se pudo sincronizar el tablero Markdown: %s", me)
+
+    # ─── Orquestación Principal ─────────────────────────────────────────
+
+    def run(self, user_idea: str) -> str:
+        """Ejecuta el pipeline completo de desarrollo autónomo dinámico."""
+        from rich.prompt import Confirm
+        total_start = time.perf_counter()
+
+        # Sprint 12 — Preguntar permisos globales al inicio para evitar saturación
+        try:
+            global_approve = Confirm.ask(
+                "\n⚡ ¿Deseas activar auto-aprobación GLOBAL para TODOS los comandos de esta ejecución? [y/n]",
+                default=False
+            )
+            if global_approve:
+                self.state.enable_project_auto_approve()
+                console.print("✓ Auto-aprobación global activada para este proceso.\n")
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+        # La confirmación visual del prompt fue eliminada para mantener la terminal limpia y compacta.
+
+        # AGENTE VALIDADOR DEL ENTORNO (Environment Probe - Sprint 11)
+        try:
+            self._run_environment_probe()
+        except Exception as e:
+            logger.error("Error ejecutando Environment Probe: %s", e)
+            console.print(f"⚠ No se pudo ejecutar el Environment Probe: {e}")
+
+        # FASE 0: Generación de Inteligencia del Proyecto
+        try:
+            self._generate_project_intelligence(user_idea)
+        except Exception as e:
+            logger.error("Error generando inteligencia del proyecto: %s", e)
+            console.print(f"⚠ No se pudo generar la inteligencia del proyecto: {e}")
+
+        # Comprobar si existe un sprint activo o planeado en este proyecto
+        resume_existing = False
+        board_path = os.path.join(self.project_path, self.board_filename)
+        json_board_filename = self.board_filename.replace(".md", ".json")
+        json_board_path = os.path.join(self.project_path, json_board_filename)
+        
+        tasks_found = []
+        if os.path.isfile(board_path) or os.path.isfile(json_board_path):
+            from core.project_orchestrator import _parse_sprint_tasks
+            import json
+            
+            # Cargar desde JSON si existe
+            if os.path.isfile(json_board_path):
+                try:
+                    with open(json_board_path, "r", encoding="utf-8") as f:
+                        tasks_found = json.load(f)
+                except Exception:
+                    pass
+            
+            # Cargar desde Markdown si no hay en JSON o falló
+            if not tasks_found and os.path.isfile(board_path):
+                try:
+                    board_content = self._read_project_file(self.board_filename)
+                    tasks_found = _parse_sprint_tasks(board_content)
+                except Exception:
+                    pass
+            
+            # Solo considerarlo sprint activo si hay tareas reales pendientes (TODO o IN_PROGRESS)
+            has_pending_tasks = any(t.get("status") in ("TODO", "IN_PROGRESS") for t in tasks_found)
+            
+            if has_pending_tasks:
+                if user_idea == "Reanudación de Sprint Activo":
+                    resume_existing = True
+                else:
+                    try:
+                        resume_existing = Confirm.ask(
+                            "\n🔄 Se detectó un sprint activo con tareas pendientes en este proyecto.\n"
+                            "¿Deseas reanudar las tareas pendientes (y) o planificar tu NUEVO requerimiento desde cero (n)?",
+                            default=False
+                        )
+                    except Exception:
+                        resume_existing = False
+            else:
+                resume_existing = False
+
+        if resume_existing:
+            console.print("[bold green]✓ Reanudando el sprint existente. Saltando fases de planificación...[/bold green]")
+            # Tratar de cargar historias del backlog como idea contextual si es posible
+            backlog_content = self._read_project_file("BACKLOG.md")
+            if backlog_content:
+                user_idea = backlog_content[:3000]
+        else:
+            # Eliminar tableros viejos y artefactos de src/ si el usuario decidió planificar un requerimiento nuevo desde cero
+            for f in (board_path, json_board_path):
+                if os.path.isfile(f):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+            src_dir = os.path.join(self.project_path, "src")
+            if os.path.isdir(src_dir):
+                import shutil
+                try:
+                    shutil.rmtree(src_dir)
+                except Exception:
+                    pass
+            console.print("[bold cyan]🧹 Tablero anterior y artefactos limpiados. Iniciando planificación del nuevo requerimiento...[/bold cyan]")
+            self.state.set_pipeline_status("OK")
+
+            # ── Sprint 14: Mega-Agente Planificador ──────────────────────────
+            # Consolida: Translator + PO (refinamiento + backlog) + DoR + SM
+            # en un máximo de 2 llamadas al LLM. Ahorra ~85% de cuota RPM.
+            if not self._run_mega_planner(user_idea):
+                total_time = time.perf_counter() - total_start
+                self._print_summary_table(total_time)
+                return "Pipeline detenido en fase de Mega-Agente Planificador."
+
+            # Validación Bloqueante de Entorno (Fase 0/DevOps)
+            # Se ejecuta después del plan maestro para informar al Task Runner
+            # del estado real del entorno antes de codificar.
+            if not self._validate_environment_blocking(user_idea):
+                total_time = time.perf_counter() - total_start
+                self._print_summary_table(total_time)
+                return "Pipeline detenido por [IMPEDIMENTO CRÍTICO]: Faltan binarios en el sistema operativo."
+
+        # Fase 3: Task Runner (Ejecución Dinámica) y Compilación automática final (Sprint 11)
+        self.state.silent_execution = True
+        try:
+            with SilentExecutionRedirect(self.state):
+                self._run_task_runner(user_idea)
+
+                if getattr(self.state, "global_status", "") == "ERROR":
+                    console.print("\n[red]⚠ El Task Runner reportó un error crítico. Abortando compilación final.[/red]")
+                else:
+                    build_cmd = self._detect_compile_command()
+                    if build_cmd:
+                        console.print("\n🛠 Ejecutando compilación de validación final del proyecto...")
+                        returncode, build_output = self._run_build_command(build_cmd)
+                        
+                        from core.terminal import screen_console
+                        if returncode == 0:
+                            screen_console.print("✓ ¡Compilación final exitosa! El proyecto está listo.\n")
+                            self.metrics.append({
+                                "fase": "🛠 Compilación Final",
+                                "detalle": f"Comando: {build_cmd}",
+                                "tiempo": 0.0,
+                                "status": "✅",
+                            })
+                        else:
+                            screen_console.print(f"⚠ La compilación final falló con código {returncode}.\n")
+                            self.metrics.append({
+                                "fase": "🛠 Compilación Final",
+                                "detalle": "Fallo de compilación",
+                                "tiempo": 0.0,
+                                "status": "❌",
+                            })
+        finally:
+            self.state.silent_execution = False
+
+        # Vincular archivos al contexto
+        for fname in self.generated_files:
+            filepath = os.path.join(self.project_path, fname)
+            if os.path.isfile(filepath):
+                self.state.context_files.add(filepath)
+        self.state.refresh_static_context()
+
+        # Resumen
+        total_time = time.perf_counter() - total_start
+        self._print_summary_table(total_time)
+        
+        try:
+            self._run_retrospective()
+        except Exception as e:
+            logger.warning("No se pudo ejecutar la retrospectiva autónoma: %s", e)
+
+        try:
+            self._review_learned_intents()
+        except Exception as e:
+            logger.warning("No se pudo ejecutar la revisión de vocabulario: %s", e)
+
+        return self._generate_final_summary(user_idea, total_time)
+
+    def _print_summary_table(self, total_time: float) -> None:
+        """Imprime tabla de resumen del pipeline."""
+        table = Table(
+            title="🪼 Resumen del Pipeline Autónomo",
+            show_header=True, header_style="bold purple",
+            border_style="dim white", show_footer=True,
+        )
+        table.add_column("Agente / Tarea", style="bold", min_width=28)
+        table.add_column("Entregable", style="dim", min_width=30)
+        table.add_column("Duración", justify="right", min_width=10, footer=f"{total_time:.1f}s total")
+        table.add_column("", justify="center", min_width=3)
+
+        for m in self.metrics:
+            secs = m["tiempo"]
+            dur = f"{secs:.1f}s"
+            table.add_row(m["fase"], m["detalle"], Text.from_markup(dur), m["status"])
+
+        console.print()
+        console.print(table)
+        console.print()
+
+    def _generate_final_summary(self, user_idea: str, total_time: float) -> str:
+        """Genera resumen textual conciso de lo fallido y el estado actual."""
+        completed_tasks = [m for m in self.metrics if m["status"] == "✅"]
+        failed_tasks = [m for m in self.metrics if m["status"] in ("❌", "⚠")]
+        
+        status_project = "COMPLETADO CON ÉXITO"
+        if failed_tasks:
+            status_project = "INCOMPLETO / CON ADVERTENCIAS (Revisar logs)"
+
+        summary_lines = [
+            f"🪼 REPORTE FINAL DEL PROYECTO ({total_time:.1f}s)",
+            f"  [bold]• Estado actual:[/bold] {status_project}",
+            f"  [bold]• Directorio:[/bold] {self.project_path}",
+            f"  [bold]• Tareas exitosas:[/bold] {len(completed_tasks)}/{len(self.metrics)}"
+        ]
+        
+        if failed_tasks:
+            summary_lines.append("  • Tareas fallidas/omitidas:")
+            for f in failed_tasks:
+                summary_lines.append(f"    - {f['fase']}: {f['detalle']}")
+                
+        healing_failures = getattr(self.state, "healing_failures", {})
+        if healing_failures:
+            summary_lines.append("  • Intentos de Auto-Recuperación fallidos:")
+            for cmd_f, log_f in healing_failures.items():
+                summary_lines.append(f"    - Comando: `{cmd_f}`")
+                for line in log_f.split('\n'):
+                    summary_lines.append(f"      {line}")
+
+        # Imprimir por pantalla
+        console.print()
+        console.print(Panel("\n".join(summary_lines), title="📋 Reporte de Estado", border_style="dim white", expand=False))
+        console.print()
+
+        # Retornar versión markdown para el historial
+        md_summary = (
+            f"🪼 **Reporte Final del Proyecto** ({total_time:.1f}s)\n\n"
+            f"- **Estado:** {status_project}\n"
+            f"- **Tareas exitosas:** {len(completed_tasks)}/{len(self.metrics)}\n"
+        )
+        if failed_tasks:
+            md_summary += "- **Tareas fallidas/omitidas:**\n"
+            for f in failed_tasks:
+                md_summary += f"  - `{f['fase']}`: {f['detalle']}\n"
+                
+        if healing_failures:
+            md_summary += "\n- **Intentos de Auto-Recuperación fallidos:**\n"
+            for cmd_f, log_f in healing_failures.items():
+                md_summary += f"  - **Comando:** `{cmd_f}`\n"
+                md_summary += "    **Detalle de intentos:**\n"
+                for line in log_f.split('\n'):
+                    md_summary += f"      {line}\n"
+
+        md_summary += f"- **Directorio:** `{self.project_path}`"
+        return md_summary
+
+    def _is_git_repo(self) -> bool:
+        """Verifica si el proyecto activo es un repositorio Git."""
+        import subprocess
+        if not self.project_path or not os.path.isdir(self.project_path):
+            return False
+        try:
+            res = subprocess.run(
+                ["git", "rev-parse", "--is-inside-work-tree"],
+                cwd=self.project_path,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return res.returncode == 0 and "true" in res.stdout.strip().lower()
+        except Exception:
+            return False
+
+    def _git_commit_snapshot(self, task_id: str) -> bool:
+        """Realiza un snapshot de git automático antes de iniciar una tarea.
+        Retorna True si se creó un commit de snapshot.
+        """
+        if not self._is_git_repo():
+            return False
+        import subprocess
+        try:
+            status_res = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=self.project_path,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if not status_res.stdout.strip():
+                return False
+            
+            subprocess.run(["git", "add", "."], cwd=self.project_path, capture_output=True, timeout=10)
+            res = subprocess.run(
+                ["git", "commit", "-m", f"jellyfish_pre_task_{task_id}"],
+                cwd=self.project_path,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            return res.returncode == 0
+        except Exception as e:
+            logger.warning("Error creando git snapshot para la tarea %s: %s", task_id, e)
+            return False
+
+    def _git_rollback(self, task_id: str, snapshot_created: bool) -> None:
+        """Revierte los cambios de la tarea si falla la compilación o ejecución."""
+        if not self._is_git_repo():
+            return
+        import subprocess
+        try:
+            console.print(f"       ↩ Revertiendo cambios de la tarea {task_id} debido a fallo de compilación/ejecución...")
+            if snapshot_created:
+                subprocess.run(["git", "reset", "--hard", "HEAD~1"], cwd=self.project_path, capture_output=True, timeout=10)
+            else:
+                subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=self.project_path, capture_output=True, timeout=10)
+            subprocess.run(["git", "clean", "-fd"], cwd=self.project_path, capture_output=True, timeout=10)
+            console.print("       ✓ Espacio de trabajo revertido al estado anterior de forma segura.")
+        except Exception as e:
+            logger.error("Error durante git rollback de la tarea %s: %s", task_id, e)
+
+    def _git_start_task_branch(self, task_id: str) -> tuple[bool, str]:
+        """Crea y se mueve a una rama temporal para la tarea (Mejora 41).
+        Retorna (exitoso, rama_original).
+        """
+        if not self._is_git_repo():
+            return False, ""
+        import subprocess
+        try:
+            # Obtener rama actual
+            res = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=self.project_path,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            original_branch = res.stdout.strip()
+            if not original_branch:
+                return False, ""
+                
+            task_branch = f"jellyfish_task_{task_id.lower().replace('-', '_')}"
+            
+            # Guardar cambios sin commitear en la rama original
+            subprocess.run(["git", "add", "."], cwd=self.project_path, capture_output=True, timeout=10)
+            subprocess.run(
+                ["git", "commit", "-m", f"jellyfish_auto_save_before_{task_id}"],
+                cwd=self.project_path, capture_output=True, timeout=10
+            )
+            
+            # Limpiar ramas antiguas de la tarea si existiesen
+            subprocess.run(["git", "checkout", original_branch], cwd=self.project_path, capture_output=True, timeout=10)
+            subprocess.run(["git", "branch", "-D", task_branch], cwd=self.project_path, capture_output=True, timeout=10)
+            
+            res_checkout = subprocess.run(
+                ["git", "checkout", "-b", task_branch],
+                cwd=self.project_path,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if res_checkout.returncode == 0:
+                console.print(f"       [dim]🌿 Rama Git de tarea creada y activa: {task_branch}[/dim]")
+                return True, original_branch
+        except Exception as e:
+            logger.warning("Error iniciando rama git para tarea %s: %s", task_id, e)
+        return False, ""
+
+    def _git_end_task_branch(self, task_id: str, original_branch: str, success: bool) -> None:
+        """Cierra el ciclo de la rama de la tarea. Si success es True, fusiona. Si es False, descarta."""
+        if not self._is_git_repo() or not original_branch:
+            return
+        import subprocess
+        task_branch = f"jellyfish_task_{task_id.lower().replace('-', '_')}"
+        try:
+            if success:
+                # Commitear cambios en la rama de la tarea
+                subprocess.run(["git", "add", "."], cwd=self.project_path, capture_output=True, timeout=10)
+                subprocess.run(
+                    ["git", "commit", "-m", f"jellyfish_completed_task_{task_id}"],
+                    cwd=self.project_path,
+                    capture_output=True,
+                    timeout=10
+                )
+                # Volver a rama original
+                subprocess.run(["git", "checkout", original_branch], cwd=self.project_path, capture_output=True, timeout=10)
+                # Fusionar
+                merge_res = subprocess.run(
+                    ["git", "merge", task_branch, "--no-edit"],
+                    cwd=self.project_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=15
+                )
+                if merge_res.returncode == 0:
+                    console.print(f"       ✓ Rama {task_branch} integrada exitosamente a {original_branch}.")
+                    # Borrar rama de la tarea
+                    subprocess.run(["git", "branch", "-d", task_branch], cwd=self.project_path, capture_output=True, timeout=10)
+                else:
+                    console.print(f"       ⚠️ Conflicto al integrar {task_branch}. Forzando rollback...")
+                    # Si falla, abortar merge y resetear
+                    subprocess.run(["git", "merge", "--abort"], cwd=self.project_path, capture_output=True, timeout=10)
+                    subprocess.run(["git", "checkout", original_branch], cwd=self.project_path, capture_output=True, timeout=10)
+                    subprocess.run(["git", "branch", "-D", task_branch], cwd=self.project_path, capture_output=True, timeout=10)
+                    subprocess.run(["git", "clean", "-fd"], cwd=self.project_path, capture_output=True, timeout=10)
+            else:
+                console.print(f"       ↩ Revertiendo cambios: Rama {task_branch} descartada.")
+                # Volver a rama original
+                subprocess.run(["git", "checkout", "-f", original_branch], cwd=self.project_path, capture_output=True, timeout=10)
+                # Borrar rama de la tarea
+                subprocess.run(["git", "branch", "-D", task_branch], cwd=self.project_path, capture_output=True, timeout=10)
+                # Limpiar
+                subprocess.run(["git", "clean", "-fd"], cwd=self.project_path, capture_output=True, timeout=10)
+                console.print("       ✓ Espacio de trabajo limpio.")
+        except Exception as e:
+            logger.error("Error al finalizar rama git para tarea %s: %s", task_id, e)
+
+    def _run_dod_validation(self, task_id: str, agent_name: str, task_desc: str, output_file: str, file_content: str) -> tuple[bool, str]:
+        """Valida que la tarea cumpla con la Definition of Done (DoD) usando un agente evaluador (Mejora 15)."""
+        console.print(f"       [dim]🔍 Validando Definition of Done (DoD) para la tarea {task_id}...[/dim]")
+        
+        system_prompt = (
+            "Eres un QA Automation Engineer experto.\n"
+            "Tu tarea es evaluar el entregable de un agente desarrollador y determinar si cumple con el 'Definition of Done' (DoD).\n"
+            "El entregable cumple con el DoD si:\n"
+            "1. Resuelve directamente la descripción de la tarea.\n"
+            "2. No tiene marcadores de posición (placeholders), comentarios TODO incompletos ni código truncado.\n"
+            "3. En caso de ser código, sigue buenas prácticas básicas.\n\n"
+            "Debes responder en formato JSON puro. Ejemplo:\n"
+            '{"approved": true, "reason": "El archivo de código implementa todas las funciones requeridas y no tiene placeholders."}\n'
+            'O si no es aprobado:\n'
+            '{"approved": false, "reason": "El archivo de código contiene comentarios TODO y el cuerpo de la función principal está vacío."}'
+        )
+        
+        user_prompt = (
+            f"DESCRIPCIÓN DE LA TAREA:\n{task_desc}\n\n"
+            f"ARCHIVO ENTREGABLE: {output_file}\n"
+            f"CONTENIDO GENERADO:\n{file_content}\n"
+        )
+        
+        try:
+            response = self._call_agent(system_prompt, user_prompt)
+            if not response:
+                return True, "DoD aprobado por defecto (sin respuesta del validador)."
+                
+            import json
+            import re
+            match = re.search(r'\{.*\}', response, re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                approved = data.get("approved", True)
+                reason = data.get("reason", "Aprobado por el QA Agent.")
+                return approved, reason
+        except Exception as e:
+            logger.warning("Error en validación DoD: %s", e)
+            
+        return True, "DoD aprobado por defecto."
+
+    def _build_intelligent_context(self, task_desc: str, output_file: str) -> str:
+        """Construye un contexto inteligente delegando la orquestación a core/rag_coder.py."""
+        from core.rag_coder import build_dynamic_rag_context
+        return build_dynamic_rag_context(self.project_path, task_desc, output_file)
+
+    def _run_dor_validation(self) -> bool:
+        """Un QA Agent audita el BACKLOG.md para certificar que está listo (DoR)."""
+        from core.orchestration.product_owner import ProductOwnerPhase
+        return ProductOwnerPhase(self).run_dor_validation()
+
+    def _run_retrospective(self) -> None:
+        """Analiza DAILY.md y guarda aprendizajes en retrospective_rules.md para futuros sprints."""
+        from core.orchestration.scrum_master import ScrumMasterPhase
+        ScrumMasterPhase(self).run_retrospective()
+
+    def _review_learned_intents(self) -> None:
+        """Al final del sprint, pregunta al usuario si desea mantener o editar los nuevos tokens creados."""
+        new_intents = getattr(self.state, "new_intents", {})
+        if not new_intents:
+            return
+
+        console.print(f"\n[bold yellow]📖 REVISIÓN DE VOCABULARIO (Translator Aprendizaje)[/bold yellow]")
+        console.print(f"Se han creado {len(new_intents)} nuevos tokens de intención en este sprint:")
+        for idx, (nat, comp) in enumerate(new_intents.items(), 1):
+            console.print(f"  {idx}. '{nat}' -> {comp}")
+            
+        try:
+            from rich.prompt import Confirm
+            keep = Confirm.ask("\n¿Deseas mantener todos estos tokens sin cambios?", default=True)
+            if keep:
+                console.print("[green]✓ Tokens guardados permanentemente.[/green]")
+                self.state.new_intents = {}
+                return
+        except Exception:
+            self.state.new_intents = {}
+            return
+
+        # El usuario quiere editar o remover alguno
+        from core.translator import IntentTranslator
+        translator = IntentTranslator(self.state)
+        
+        for nat, comp in list(new_intents.items()):
+            console.print(f"\nToken: '{nat}' -> {comp}")
+            try:
+                action = input("Escribe el nuevo token corregido, o 'd' para eliminarlo, o presiona Enter para mantenerlo: ").strip()
+                if action.lower() == 'd':
+                    if nat in translator.intent_map:
+                        del translator.intent_map[nat]
+                    console.print(f"[red]✗ Eliminado.[/red]")
+                elif action:
+                    if not action.startswith("[") or not action.endswith("]"):
+                        action = f"[{action}]"
+                    translator.intent_map[nat] = action.upper()
+                    console.print(f"[green]✓ Actualizado a: {action.upper()}[/green]")
+                else:
+                    console.print("[dim]Manteniendo sin cambios.[/dim]")
+            except (KeyboardInterrupt, EOFError):
+                break
+                
+        translator._save_map()
+        self.state.new_intents = {}
+        console.print("[green]✓ Revisión de vocabulario completada.[/green]")

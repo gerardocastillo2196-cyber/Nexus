@@ -14,6 +14,7 @@ import argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.config import AGENCY_DIR
+from core import __version__
 
 def setup_environment():
     import shutil
@@ -98,7 +99,7 @@ def check_status():
     from core.skills.registry import SkillRegistry
     
     console = Console()
-    console.print("\n[bold purple]🔍 Auditando Estado de Jellyfish OS v6.9.15[/bold purple]\n")
+    console.print(f"\n[bold purple]🔍 Auditando Estado de Jellyfish OS v{__version__}[/bold purple]\n")
     
     # 1. Rutas
     console.print(f"[bold]Directorio de Trabajo (AGENCY_DIR):[/bold] {AGENCY_DIR}")

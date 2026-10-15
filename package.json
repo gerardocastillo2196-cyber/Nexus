@@ -1,0 +1,20 @@
+{
+  "name": "jellyfish-os",
+  "version": "1.0.0",
+  "description": "Jellyfish OS — Sistema Operativo IA Unificado (Agentes + RAG + ESCRIBA Engine)",
+  "main": "jellyfish_web.py",
+  "scripts": {
+    "start": "python3 jellyfish_web.py",
+    "dev": "python3 jellyfish_web.py & (cd web-ui && npm run dev)",
+    "build": "npm --prefix web-ui run build"
+  },
+  "keywords": [
+    "jellyfish",
+    "ai",
+    "rag",
+    "escriba",
+    "agents"
+  ],
+  "author": "Jellyfish OS Team",
+  "license": "MIT"
+}
