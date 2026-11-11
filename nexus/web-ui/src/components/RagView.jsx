@@ -152,7 +152,7 @@ export default function RagView({ onStateRefresh, onNavigate }) {
           </div>
         </div>
         <button className="btn btn-secondary" onClick={() => onNavigate('chat')}>
-          ➔ Volver al Chat
+          Volver al Chat
         </button>
       </div>
 

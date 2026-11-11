@@ -107,7 +107,7 @@ class ScrumMasterPhase:
         except Exception as log_err:
             logger.warning("No se pudo escribir en jellyfish_debug.log: %s", log_err)
 
-        console.print("[yellow]⚠ BACKLOG.json no cumple con el esquema estricto. Iniciando Auto-Healing del Backlog...[/yellow]")
+        console.print("[yellow][ADVERTENCIA] BACKLOG.json no cumple con el esquema estricto. Iniciando Auto-Healing del Backlog...[/yellow]")
         
         # Llamar silenciosamente a LLM
         from core.llm_engine import _call_llm_silent
@@ -152,17 +152,17 @@ class ScrumMasterPhase:
                 # Validar el healed JSON
                 json.loads(json_clean)
                 self.orchestrator._write_project_file("BACKLOG.json", json_clean)
-                console.print("[green]✓ Auto-Healing exitoso. BACKLOG.json corregido.[/green]")
+                console.print("[green][OK] Auto-Healing exitoso. BACKLOG.json corregido.[/green]")
                 return json_clean
             except Exception:
                 pass
                 
-        console.print("[red]❌ Falló el Auto-Healing del BACKLOG.json. Continuando con el backlog existente.[/red]")
+        console.print("[red][ERROR] Falló el Auto-Healing del BACKLOG.json. Continuando con el backlog existente.[/red]")
         return backlog_content
 
     def run(self, user_idea: str) -> bool:
         """SM escanea agentes, arma equipo y genera el tablero correspondiente a la agencia."""
-        console.print(f"\n━━━ FASE 2: 📋 Scrum Master (Team Assembly - Agencia: {self.orchestrator.state.active_agency.upper()}) ━━━")
+        console.print(f"\n━━━ FASE 2: [LISTA] Scrum Master (Team Assembly - Agencia: {self.orchestrator.state.active_agency.upper()}) ━━━")
         t0 = time.perf_counter()
 
         # Importar helpers de orquestador para escaneo y parseo
@@ -212,12 +212,12 @@ class ScrumMasterPhase:
             "REQUISITOS DE CALIDAD Y RIQUEZA DE CONTENIDO:\n"
             "Queremos un tablero de sprint extremadamente rico en detalles técnicos. Sigue estas directrices:\n"
             "- Las descripciones de las tareas en la tabla deben ser detalladas y explícitas sobre qué construir (no usar resúmenes vagos).\n"
-            "- Abajo de la tabla de tareas, debes incluir obligatoriamente una sección titulada '### 📋 Especificaciones de Tareas y Criterios de Aceptación Técnicos'.\n"
+            "- Abajo de la tabla de tareas, debes incluir obligatoriamente una sección titulada '### [LISTA] Especificaciones de Tareas y Criterios de Aceptación Técnicos'.\n"
             "- En esta sección, desglosa cada ID de tarea (T-001, T-002, etc.) y detalla paso a paso qué debe implementar el agente, qué APIs o controladores usar, qué validaciones hacer, y los entregables esperados en el archivo destino.\n"
-            "- Asegúrate de incluir las secciones de '## ⏳ EN PROCESO (IN PROGRESS)' y '## ✅ HECHO (DONE)' vacías como marcadores.\n\n"
+            "- Asegúrate de incluir las secciones de '## [EN PROCESO] EN PROCESO (IN PROGRESS)' y '## [COMPLETADO] HECHO (DONE)' vacías como marcadores.\n\n"
             f"FORMATO OBLIGATORIO del tablero (la tabla TODO DEBE tener exactamente 6 columnas en {self.orchestrator.board_filename}):\n"
             "```\n"
-            "## 📋 POR HACER (TODO)\n"
+            "## [LISTA] POR HACER (TODO)\n"
             "| ID | Tarea | Asignado | Estimación | Entregable | Dependencias |\n"
             "|---|---|---|---|---|---|\n"
             "| T-001 | [US-001] Diseñar la arquitectura del sistema | @arquitecto_software | M | ARCHITECTURE.md | Ninguna |\n"
@@ -243,8 +243,8 @@ class ScrumMasterPhase:
         elapsed = time.perf_counter() - t0
 
         if not result:
-            self.orchestrator.metrics.append({"fase": "📋 Scrum Master", "detalle": "ERROR", "tiempo": elapsed, "status": "❌"})
-            console.print("✗ Scrum Master no produjo resultado.")
+            self.orchestrator.metrics.append({"fase": "[LISTA] Scrum Master", "detalle": "ERROR", "tiempo": elapsed, "status": "[ERROR]"})
+            console.print("[X] Scrum Master no produjo resultado.")
             return False
 
         target_board = self.orchestrator.board_filename
@@ -306,7 +306,7 @@ class ScrumMasterPhase:
             except Exception as log_err:
                 logger.warning("No se pudo escribir en jellyfish_debug.log: %s", log_err)
 
-            console.print("[yellow]⚠ Scrum Master detectó historias no mapeadas o tabla vacía. Iniciando Auto-Healing del Tablero...[/yellow]")
+            console.print("[yellow][ADVERTENCIA] Scrum Master detectó historias no mapeadas o tabla vacía. Iniciando Auto-Healing del Tablero...[/yellow]")
             
             # Auto-Healing: transformar la estructura JSON de forma que coincida con el formato del SPRINT_BOARD.md
             from core.llm_engine import _call_llm_silent
@@ -316,7 +316,7 @@ class ScrumMasterPhase:
                 f"estén mapeadas a tareas técnicas concretas en la tabla de Markdown.\n\n"
                 f"EQUIPO DISPONIBLE:\n{agents_catalog}\n\n"
                 f"FORMATO REQUERIDO DE TABLA:\n"
-                f"## 📋 POR HACER (TODO)\n"
+                f"## [LISTA] POR HACER (TODO)\n"
                 f"| ID | Tarea | Asignado | Estimación | Entregable | Dependencias |\n"
                 f"|---|---|---|---|---|---|\n"
                 f"| T-001 | [Detalle técnico para US-001] | @agente | M | archivo_de_salida | Dependencia |\n\n"
@@ -339,30 +339,30 @@ class ScrumMasterPhase:
                     result = healed_board
                     self.orchestrator._write_project_file(target_board, result)
                     tasks = healed_tasks
-                    console.print("[green]✓ Auto-Healing del Tablero completado con éxito.[/green]")
+                    console.print("[green][OK] Auto-Healing del Tablero completado con éxito.[/green]")
                 else:
                     logger.warning("Auto-Healing no produjo tareas parseables válidas. Preservando tareas generadas inicialmente.")
 
         if not tasks:
-            console.print("[yellow]⚠ Sintetizando tablero de tareas de contingencia directamente a partir del Backlog...[/yellow]")
+            console.print("[yellow][ADVERTENCIA] Sintetizando tablero de tareas de contingencia directamente a partir del Backlog...[/yellow]")
             tasks = self._synthesize_fallback_board(target_board, backlog)
 
         # Sprint 13 — Resolver asignaciones @autodetect programáticamente (Python puro, 0 tokens)
         active_agency = getattr(self.orchestrator.state, "active_agency", "")
         resolved_count = _resolve_agent_assignments(tasks, active_agency)
         if resolved_count:
-            console.print(f"[dim]   ⚙ Asignación programática: {resolved_count} tarea(s) resueltas automáticamente por Python[/dim]")
+            console.print(f"[dim]   [SISTEMA] Asignación programática: {resolved_count} tarea(s) resueltas automáticamente por Python[/dim]")
 
         try:
             import json
             json_filename = target_board.replace(".md", ".json")
             self.orchestrator._write_project_file(json_filename, json.dumps(tasks, indent=2, ensure_ascii=False))
-            console.print(f"       [dim]✓ Tablero JSON estructurado guardado: {json_filename}[/dim]")
+            console.print(f"       [dim][OK] Tablero JSON estructurado guardado: {json_filename}[/dim]")
         except Exception as je:
             logger.warning("No se pudo escribir el tablero JSON: %s", je)
 
         unique_agents = set(t["agent"] for t in tasks)
-        console.print(f"✓ {target_board} [dim]({tokens:,} tokens · {elapsed:.1f}s)[/dim]")
+        console.print(f"[OK] {target_board} [dim]({tokens:,} tokens · {elapsed:.1f}s)[/dim]")
         console.print(f"[dim]   Equipo seleccionado: {', '.join(f'@{a}' for a in sorted(unique_agents))}[/dim]")
         console.print(f"[dim]   Tareas planificadas: {len(tasks)}[/dim]")
 
@@ -378,7 +378,7 @@ class ScrumMasterPhase:
             )
             existing_daily = self.orchestrator._read_project_file("DAILY.md")
             self.orchestrator._write_project_file("DAILY.md", existing_daily + daily_entry)
-            console.print("✓ Registro de Sprint Planning guardado en DAILY.md")
+            console.print("[OK] Registro de Sprint Planning guardado en DAILY.md")
         except Exception as e_daily:
             logger.warning("No se pudo registrar el evento Sprint Planning en DAILY.md: %s", e_daily)
 
@@ -413,7 +413,7 @@ class ScrumMasterPhase:
             return []
 
         board_lines = [
-            "## 📋 POR HACER (TODO)",
+            "## [LISTA] POR HACER (TODO)",
             "| ID | Tarea | Asignado | Estimación | Entregable | Dependencias |",
             "|---|---|---|---|---|---|"
         ]
@@ -438,9 +438,9 @@ class ScrumMasterPhase:
 
         board_lines.extend([
             "",
-            "## ⏳ EN PROCESO (IN PROGRESS)",
+            "## [EN PROCESO] EN PROCESO (IN PROGRESS)",
             "",
-            "## ✅ HECHO (DONE)",
+            "## [COMPLETADO] HECHO (DONE)",
             ""
         ])
 
@@ -458,7 +458,7 @@ class ScrumMasterPhase:
         if not daily_content:
             return
 
-        console.print("\n━━━ FASE COMPLEMENTARIA: 🧠 Retrospectiva Autónoma ━━━")
+        console.print("\n━━━ FASE COMPLEMENTARIA: [ORQUESTADOR] Retrospectiva Autónoma ━━━")
         
         system_prompt = (
             "Eres el Scrum Master de Jellyfish OS.\n"
@@ -488,6 +488,6 @@ class ScrumMasterPhase:
             try:
                 with open(retro_file, "w", encoding="utf-8") as f:
                     f.write(existing + f"## Retrospectiva {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n" + rules)
-                console.print("✓ Lecciones guardadas en memory/retrospective_rules.md")
+                console.print("[OK] Lecciones guardadas en memory/retrospective_rules.md")
             except (OSError, IOError) as e:
                 logger.warning("Error guardando retrospectiva: %s", e)

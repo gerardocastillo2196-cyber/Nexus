@@ -36,3 +36,4 @@ model.gguf
 # Web UI build output
 web-ui/dist/
 
+node_modules/

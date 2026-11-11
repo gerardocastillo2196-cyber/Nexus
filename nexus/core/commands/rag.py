@@ -40,20 +40,20 @@ def _handle_add(arg: str, state, rag, display_header_func):
             rag.index_codebase(path)
             rag.enabled = True
         except KeyboardInterrupt:
-            console.print("\n[bold yellow]⚠ Indexación cancelada por el usuario.[/bold yellow]")
+            console.print("\n[bold yellow][ADVERTENCIA] Indexación cancelada por el usuario.[/bold yellow]")
     else:
         state.add_context_file(path)
         rag.enabled = True
 
     state.refresh_static_context()
-    console.print(f"✓ Contexto actualizado: {len(state.context_files)} archivos.")
+    console.print(f"[OK] Contexto actualizado: {len(state.context_files)} archivos.")
     input("\nPresiona Enter para continuar...")
 
 def _handle_context(state, display_header_func):
     """Procesa el comando /context."""
     files = list(state.context_files)
     if not files:
-        console.print("⚠ El contexto está vacío. Usa /add para vincular archivos.")
+        console.print("[ADVERTENCIA] El contexto está vacío. Usa /add para vincular archivos.")
         input("\nPresiona Enter para continuar...")
     else:
         while True:
@@ -66,7 +66,7 @@ def _handle_context(state, display_header_func):
             if sel == "Limpiar todo":
                 state.context_files.clear()
                 state.refresh_static_context()
-                console.print("✓ Contexto limpiado.")
+                console.print("[OK] Contexto limpiado.")
                 break
             state.context_files.discard(sel)
             state.refresh_static_context()
@@ -74,13 +74,13 @@ def _handle_context(state, display_header_func):
 def _handle_purge(state, rag, display_header_func):
     """Procesa el comando /purge."""
     if not state.context_files and not rag.is_active:
-        console.print("⚠ No hay nada que purgar.")
+        console.print("[ADVERTENCIA] No hay nada que purgar.")
         input("\nPresiona Enter para continuar...")
     else:
         state.context_files.clear()
         state.refresh_static_context()
         rag.clear_index()
-        console.print("☢ Contexto y base RAG purgados por completo.")
+        console.print("[PELIGRO] Contexto y base RAG purgados por completo.")
         input("\nPresiona Enter para continuar...")
 
 def _handle_rag(arg: str, rag, display_header_func):
@@ -124,11 +124,11 @@ def _handle_rag(arg: str, rag, display_header_func):
         if not val:
             console.print("Uso: /rag preview <pregunta>")
         elif not rag.is_active:
-            console.print("⚠ No hay índice RAG activo. Usa /add para indexar una carpeta.")
+            console.print("[ADVERTENCIA] No hay índice RAG activo. Usa /add para indexar una carpeta.")
         else:
             raw_context = rag.query_code(val)
             if not raw_context:
-                console.print("⚠ No se encontraron fragmentos relevantes para esa consulta.")
+                console.print("[ADVERTENCIA] No se encontraron fragmentos relevantes para esa consulta.")
             else:
                 import re as _re
                 from core.rag_coder import _FRAG_OPEN
@@ -140,7 +140,7 @@ def _handle_rag(arg: str, rag, display_header_func):
                 matches = frag_pattern.findall(raw_context)
                 if matches:
                     from rich.table import Table
-                    table = Table(title="🔍 Previsualización RAG", border_style="dim white", show_lines=True)
+                    table = Table(title="[BUSQUEDA] Previsualización RAG", border_style="dim white", show_lines=True)
                     table.add_column("#", justify="center", width=3)
                     table.add_column("Fuente", style="bold cyan", max_width=40)
                     table.add_column("Distancia L2", justify="center", width=12)
@@ -156,17 +156,17 @@ def _handle_rag(arg: str, rag, display_header_func):
 
     elif subcmd == "on":
         rag.enabled = True
-        console.print("✓ Inyección de contexto RAG [bold green]activada[/bold green] temporalmente.")
+        console.print("[OK] Inyección de contexto RAG [bold green]activada[/bold green] temporalmente.")
 
     elif subcmd == "off":
         rag.enabled = False
-        console.print("✓ Inyección de contexto RAG [bold red]desactivada[/bold red] temporalmente.")
+        console.print("[OK] Inyección de contexto RAG [bold red]desactivada[/bold red] temporalmente.")
 
     else:
         if not subcmd or subcmd == "toggle":
             rag.enabled = not getattr(rag, "enabled", True)
             estado = "[bold green]activado[/bold green]" if rag.enabled else "[bold red]desactivado[/bold red]"
-            console.print(f"✓ Inyección de contexto RAG {estado} temporalmente.")
+            console.print(f"[OK] Inyección de contexto RAG {estado} temporalmente.")
         else:
             console.print(
                 "Uso:\n"
@@ -235,7 +235,7 @@ def _handle_ignore(arg: str, state):
                     "*.exe", "*.so", "*.dll", "*.zip", "*.tar.gz"
                 ]
                 _write_patterns(defaults)
-                console.print("✓ .jellyfishignore inicializado con patrones por defecto.")
+                console.print("[OK] .jellyfishignore inicializado con patrones por defecto.")
                 input("\nPresiona Enter para continuar...")
 
             elif action == "Agregar Patrón":
@@ -247,7 +247,7 @@ def _handle_ignore(arg: str, state):
                     else:
                         patterns.append(pat)
                         _write_patterns(patterns)
-                        console.print(f"✓ Patrón '{pat}' agregado.")
+                        console.print(f"[OK] Patrón '{pat}' agregado.")
                     input("\nPresiona Enter para continuar...")
 
             elif action == "Remover Patrón":
@@ -260,7 +260,7 @@ def _handle_ignore(arg: str, state):
                 if sel:
                     patterns.remove(sel)
                     _write_patterns(patterns)
-                    console.print(f"✓ Patrón '{sel}' removido.")
+                    console.print(f"[OK] Patrón '{sel}' removido.")
                     input("\nPresiona Enter para continuar...")
         return
 
@@ -284,7 +284,7 @@ def _handle_ignore(arg: str, state):
             "*.exe", "*.so", "*.dll", "*.zip", "*.tar.gz"
         ]
         _write_patterns(defaults)
-        console.print("✓ .jellyfishignore inicializado con patrones por defecto.")
+        console.print("[OK] .jellyfishignore inicializado con patrones por defecto.")
 
     elif subcmd == "add":
         if not val:
@@ -296,7 +296,7 @@ def _handle_ignore(arg: str, state):
             else:
                 patterns.append(val)
                 _write_patterns(patterns)
-                console.print(f"✓ Patrón '{val}' agregado.")
+                console.print(f"[OK] Patrón '{val}' agregado.")
 
     elif subcmd == "remove":
         if not val:
@@ -306,6 +306,6 @@ def _handle_ignore(arg: str, state):
             if val in patterns:
                 patterns.remove(val)
                 _write_patterns(patterns)
-                console.print(f"✓ Patrón '{val}' removido.")
+                console.print(f"[OK] Patrón '{val}' removido.")
             else:
                 console.print(f"Patrón '{val}' no encontrado en .jellyfishignore.")

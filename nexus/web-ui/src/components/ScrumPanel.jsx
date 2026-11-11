@@ -12,17 +12,17 @@ export default function ScrumPanel({ onClose }) {
   }, []);
 
   const TABS = [
-    { key: 'sprint_board', label: 'Sprint Board', icon: '' },
-    { key: 'backlog', label: 'Backlog', icon: '📦' },
-    { key: 'daily', label: 'Daily Log', icon: '' },
+    { key: 'sprint_board', label: 'Sprint Board' },
+    { key: 'backlog', label: 'Backlog' },
+    { key: 'daily', label: 'Daily Log' },
   ];
 
   return (
     <div className="scrum-overlay" onClick={onClose}>
       <div className="scrum-panel" onClick={(e) => e.stopPropagation()}>
         <div className="scrum-panel-header">
-          <h3> Artefactos Scrum</h3>
-          <button className="scrum-close-btn" onClick={onClose}>✕</button>
+          <h3>Artefactos Scrum</h3>
+          <button className="scrum-close-btn" onClick={onClose}>X</button>
         </div>
 
         <div className="scrum-tabs">
@@ -32,7 +32,7 @@ export default function ScrumPanel({ onClose }) {
               className={`scrum-tab ${activeTab === tab.key ? 'active' : ''}`}
               onClick={() => setActiveTab(tab.key)}
             >
-              {tab.icon} {tab.label}
+              {tab.label}
             </button>
           ))}
         </div>

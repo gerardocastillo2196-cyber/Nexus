@@ -25,11 +25,11 @@ def detailed_interview(type_key: str) -> str | None:
     session = PromptSession()
 
     if type_key == "agents":
-        console.print("🎭 FORJA AVANZADA DE AGENTE (PYTHON)")
+        console.print("[AGENTE] FORJA AVANZADA DE AGENTE (PYTHON)")
         raw_name = session.prompt("1. Alias (ej. arquitecto_software): ").strip()
         name = _sanitize_name(raw_name)
         if not name:
-            console.print("⚠ Nombre inválido o vacío.")
+            console.print("[ADVERTENCIA] Nombre inválido o vacío.")
             return None
         rol = session.prompt("2. Rol Principal: ").strip()
         contexto = session.prompt("3. Contexto Operativo: ").strip()
@@ -66,11 +66,11 @@ class {class_name}(BaseAgent):
         path = os.path.join(AGENCY_DIR, "agents", f"{name}.py")
 
     else:
-        console.print("🛠️ FORJA AVANZADA DE HABILIDAD (PYTHON)")
+        console.print("[COMPILACION] FORJA AVANZADA DE HABILIDAD (PYTHON)")
         raw_name = session.prompt("1. Nombre (ej. Async Messaging): ").strip()
         name = _sanitize_name(raw_name)
         if not name:
-            console.print("⚠ Nombre inválido o vacío.")
+            console.print("[ADVERTENCIA] Nombre inválido o vacío.")
             return None
         obj = session.prompt("2. Propósito / Objetivo: ").strip()
         trigger = session.prompt("3. Activación (Trigger): ").strip()
@@ -125,7 +125,7 @@ class {class_name}(BaseSkill):
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
-        console.print(f"✓ @{name} forjado profesionalmente en {os.path.basename(path)}.")
+        console.print(f"[OK] @{name} forjado profesionalmente en {os.path.basename(path)}.")
         return name
     except (OSError, IOError) as e:
         console.print(f"Error guardando: {e}")
@@ -196,7 +196,7 @@ def handle_crud(entity_type: str, state, display_header_func=None) -> None:
                     if new.strip():
                         with open(path, "w", encoding="utf-8") as f:
                             f.write(new)
-                        console.print(f"✓ @{name} actualizado.")
+                        console.print(f"[OK] @{name} actualizado.")
                         state.scan_agencies()
                         state.refresh_static_context()
                 except (OSError, IOError) as e:
@@ -231,7 +231,7 @@ def handle_crud(entity_type: str, state, display_header_func=None) -> None:
                 ext = items_map[name]
                 try:
                     os.remove(os.path.join(base_dir, f"{name}{ext}"))
-                    console.print(f"✓ @{name} eliminado.")
+                    console.print(f"[OK] @{name} eliminado.")
                     if entity_type == "agents" and state.active_agent == name:
                         state.load_agent("default")
                     if entity_type == "skills":

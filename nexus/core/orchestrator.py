@@ -37,7 +37,7 @@ class ResearchOrchestrator(BaseOrchestrator):
     def execute_task(self, user_query: str) -> str:
         """Ejecuta el flujo multi-agente completo con UI de progreso y tabla de resumen."""
         console.print(
-            "\n🧠 Jellyfish — Orquestador de Investigación"
+            "\n[ORQUESTADOR] Jellyfish — Orquestador de Investigación"
         )
 
         metrics: list[dict] = []
@@ -56,12 +56,12 @@ class ResearchOrchestrator(BaseOrchestrator):
 
         steps = self._parse_plan_safe(plan_text)
         if not steps:
-            console.print("[dim]⚠ Plan no parseable, usando consulta original como paso único.[/dim]")
+            console.print("[dim][ADVERTENCIA] Plan no parseable, usando consulta original como paso único.[/dim]")
             steps = [{"query": user_query}]
 
         phase1_time = time.perf_counter() - t0
         metrics.append({
-            "fase": "🗺  Lead Planner",
+            "fase": "[PLAN]  Lead Planner",
             "detalle": f"{len(steps)} paso(s) planificados",
             "tiempo": phase1_time,
         })
@@ -107,14 +107,14 @@ class ResearchOrchestrator(BaseOrchestrator):
             sub_time = time.perf_counter() - t0
             tokens_est = estimate_tokens(sub_result)
             metrics.append({
-                "fase": f"🔍 Search Agent {i+1}",
+                "fase": f"[BUSQUEDA] Search Agent {i+1}",
                 "detalle": f"~{tokens_est} tokens · {len(rag_sources_used)} fuentes",
                 "tiempo": sub_time,
             })
 
         # --- FASE 3: Síntesis Final ---
         t0 = time.perf_counter()
-        console.print("\n✍  Lead Agent: Redactando reporte final...")
+        console.print("\n[INPUT]  Lead Agent: Redactando reporte final...")
         synth_system = (
             "Eres el Lead Agent. Recibiste los hallazgos de tus subagentes de búsqueda. "
             "Redacta un reporte final cohesivo y profesional. "
@@ -127,7 +127,7 @@ class ResearchOrchestrator(BaseOrchestrator):
         )
         phase3_time = time.perf_counter() - t0
         metrics.append({
-            "fase": "✍  Lead Synthesizer",
+            "fase": "[INPUT]  Lead Synthesizer",
             "detalle": f"~{estimate_tokens(draft_report)} tokens generados",
             "tiempo": phase3_time,
         })
@@ -138,7 +138,7 @@ class ResearchOrchestrator(BaseOrchestrator):
             final_report = self._apply_heuristic_citations(draft_report, rag_sources_used)
         phase4_time = time.perf_counter() - t0
         metrics.append({
-            "fase": "📚 Citation Agent",
+            "fase": "[FUENTES] Citation Agent",
             "detalle": f"{len(rag_sources_used)} fuentes analizadas",
             "tiempo": phase4_time,
         })
@@ -157,7 +157,7 @@ class ResearchOrchestrator(BaseOrchestrator):
     def _print_summary_table(self, metrics: list[dict], total_time: float) -> None:
         """Imprime una tabla rich con las métricas de cada fase del pipeline."""
         table = Table(
-            title="📊 Resumen del Pipeline de Investigación",
+            title="[METRICAS] Resumen del Pipeline de Investigación",
             show_header=True,
             header_style="bold cyan",
             border_style="dim white",
@@ -191,7 +191,7 @@ class ResearchOrchestrator(BaseOrchestrator):
         if not actual_citations:
             return text
 
-        citation_block = "\n\n---\n**📚 Fuentes Verificadas (RAG):**\n"
+        citation_block = "\n\n---\n**[FUENTES] Fuentes Verificadas (RAG):**\n"
         for src in sorted(actual_citations):
             abs_path = os.path.abspath(src)
             citation_block += f"- [{src}](file://{abs_path})\n"

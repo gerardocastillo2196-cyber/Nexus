@@ -28,7 +28,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_DIR"
 
-[[ -d "venv/bin" ]] && source venv/bin/activate
+if [[ -d ".venv/bin" ]]; then
+    source .venv/bin/activate
+elif [[ -d "../.venv/bin" ]]; then
+    source ../.venv/bin/activate
+elif [[ -d "venv/bin" ]]; then
+    source venv/bin/activate
+fi
 
 header() {
     echo ""

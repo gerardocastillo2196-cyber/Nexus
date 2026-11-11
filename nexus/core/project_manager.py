@@ -60,7 +60,7 @@ def update_project_lock(state, old_project: str) -> None:
                 if pid != os.getpid():
                     from rich.console import Console
                     Console().print(
-                        f"\n⚠️  ¡ADVERTENCIA DE CONCURRENCIA! El proyecto {state.active_project} "
+                        f"\n[ADVERTENCIA]  ¡ADVERTENCIA DE CONCURRENCIA! El proyecto {state.active_project} "
                         f"ya está abierto en otra instancia de Jellyfish OS (PID: {pid}).\n"
                         f"Para prevenir corrupción de datos en ChromaDB y conflictos de archivos, "
                         f"por favor evita realizar cambios simultáneos desde ambas sesiones.\n"
@@ -93,12 +93,12 @@ def setup_project_virtual_env(state) -> None:
         if not os.path.isdir(venv_path):
             from rich.console import Console
             import subprocess
-            Console().print(f"\n⚡ Detectada tecnología Python en el proyecto. Creando entorno virtual (.venv)...")
+            Console().print(f"\n[ACCION] Detectada tecnología Python en el proyecto. Creando entorno virtual (.venv)...")
             try:
                 subprocess.run(["python3", "-m", "venv", ".venv"], cwd=state.active_project, check=True)
-                Console().print("✓ Entorno virtual (.venv) creado con éxito.")
+                Console().print("[OK] Entorno virtual (.venv) creado con éxito.")
             except Exception as e:
-                Console().print(f"⚠ Error al crear el entorno virtual: {e}")
+                Console().print(f"[ADVERTENCIA] Error al crear el entorno virtual: {e}")
 
 def is_project_auto_approved(state) -> bool:
     """Retorna True si el proyecto activo tiene la auto-aprobación de comandos activada (Sprint 11)."""

@@ -5,8 +5,8 @@
   "main": "jellyfish_web.py",
   "scripts": {
     "start": "python3 jellyfish_web.py",
-    "dev": "python3 jellyfish_web.py & (cd web-ui && npm run dev)",
-    "build": "npm --prefix web-ui run build"
+    "dev": "python3 jellyfish_web.py & (cd nexus/web-ui && npm run dev)",
+    "build": "npm --prefix nexus/web-ui run build"
   },
   "keywords": [
     "jellyfish",

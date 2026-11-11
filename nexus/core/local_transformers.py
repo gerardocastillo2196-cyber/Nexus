@@ -57,7 +57,7 @@ class LazyModelLoader:
         if self._pipeline is None:
             try:
                 from transformers import pipeline
-                console.print(f"[dim]⚡ [FinOps] Cargando modelo local en memoria: {self.model_name} (Dispositivo: {'CPU' if self._device == -1 else 'GPU'})...[/dim]")
+                console.print(f"[dim][ACCION] [FinOps] Cargando modelo local en memoria: {self.model_name} (Dispositivo: {'CPU' if self._device == -1 else 'GPU'})...[/dim]")
                 self._pipeline = pipeline(
                     task=self.task,
                     model=self.model_name,
@@ -67,7 +67,7 @@ class LazyModelLoader:
                 )
             except Exception as e:
                 logger.error("Error cargando modelo %s: %s", self.model_name, e)
-                console.print(f"[bold yellow]⚠ Advertencia de carga local:[/bold yellow] No se pudo inicializar el modelo {self.model_name}: {e}")
+                console.print(f"[bold yellow][ADVERTENCIA] Advertencia de carga local:[/bold yellow] No se pudo inicializar el modelo {self.model_name}: {e}")
                 return None
         return self._pipeline
 

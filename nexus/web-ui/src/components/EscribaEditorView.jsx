@@ -1,10 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-export default function EscribaEditorView({ onNavigate, onSendMessage, onSelectChapter, embedded = false, isEscribaActive = true, latestAiResponse = '' }) {
+export default function EscribaEditorView({
+  onNavigate,
+  onSendMessage,
+  onSelectChapter,
+  embedded = false,
+  isEscribaActive = true,
+  latestAiResponse = '',
+  activeProject = null
+}) {
   const [chapters, setChapters] = useState([]);
   const [activeChapterId, setActiveChapterId] = useState(null);
   const [showChapterSidebar, setShowChapterSidebar] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [hasProject, setHasProject] = useState(Boolean(activeProject && activeProject.trim() !== '' && activeProject !== 'Sin proyecto'));
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -65,8 +74,32 @@ export default function EscribaEditorView({ onNavigate, onSendMessage, onSelectC
   };
 
   useEffect(() => {
-    fetchChapters();
-  }, []);
+    const checkProjects = async () => {
+      try {
+        const res = await fetch('/api/escriba/projects');
+        if (res.ok) {
+          const data = await res.json();
+          const projs = data.projects || [];
+          const active = projs.find(p => p.active);
+          const projectActive = Boolean(active);
+          setHasProject(projectActive);
+          if (projectActive) {
+            fetchChapters();
+          } else {
+            setLoading(false);
+          }
+        } else {
+          setHasProject(false);
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Error verificando proyectos:', err);
+        setHasProject(false);
+        setLoading(false);
+      }
+    };
+    checkProjects();
+  }, [activeProject]);
 
   // Gemini Canvas Sync: Recargar capítulos cuando la IA responde en el Chat
   useEffect(() => {
@@ -125,7 +158,7 @@ export default function EscribaEditorView({ onNavigate, onSendMessage, onSelectC
 
   const handleNewChapter = async () => {
     const currentList = Array.isArray(chapters) ? chapters : [];
-    const newTitle = `Capítulo ${currentList.length + 1}: Nuevo Capítulo`;
+    const newTitle = `Fragmento ${currentList.length + 1}`;
     try {
       const res = await fetch('/api/escriba/chapters', {
         method: 'POST',
@@ -191,6 +224,24 @@ export default function EscribaEditorView({ onNavigate, onSendMessage, onSelectC
       console.error('Error al importar borrador:', err);
     } finally {
       e.target.value = '';
+    }
+  };
+
+  const handleExportManuscript = async () => {
+    try {
+      const res = await fetch('/api/escriba/export?format=md');
+      if (!res.ok) throw new Error('Error al exportar manuscrito');
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `manuscrito_completo.md`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Error al exportar manuscrito:', err);
     }
   };
 
@@ -270,11 +321,48 @@ export default function EscribaEditorView({ onNavigate, onSendMessage, onSelectC
   const totalUnifiedWords = (chapters || []).reduce((acc, c) => acc + (c.wordCount || (c.content ? c.content.trim().split(/\s+/).length : 0)), 0);
   const totalUnifiedReadingTime = Math.ceil(totalUnifiedWords / 200);
   const unifiedMarkdown = (chapters || []).map((chap, idx) => {
-    return `## ${chap.title || `Capítulo ${idx + 1}`}\n\n${chap.content || '(Borrador sin contenido)'}`;
+    return `## ${chap.title || `Fragmento ${idx + 1}`}\n\n${chap.content || '(Borrador sin contenido)'}`;
   }).join('\n\n---\n\n');
 
   const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
   const readingTime = Math.ceil(wordCount / 200);
+
+  if (!loading && !hasProject) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+        height: '100%', padding: '32px', textAlign: 'center',
+        color: 'var(--text-primary, #f0f1f5)'
+      }}>
+        <div style={{
+          maxWidth: '480px', padding: '32px', borderRadius: '16px',
+          background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(249, 115, 22, 0.3)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px'
+        }}>
+          <span style={{ fontSize: '13px', fontWeight: 700, color: '#fb923c', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            [AVISO] Canva Bloqueado
+          </span>
+          <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: '#fff' }}>
+            No hay ningún proyecto activo en ESCRIBA
+          </h2>
+          <p style={{ margin: 0, fontSize: '14px', color: '#94a3b8', lineHeight: 1.5 }}>
+            Para redactar manuscritos y utilizar el Canva de Escritura, primero debes crear o seleccionar un proyecto en el Gestor de Proyectos.
+          </p>
+          <button
+            onClick={() => onNavigate('escriba_projects')}
+            style={{
+              padding: '12px 24px', borderRadius: '10px',
+              background: 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+              border: 'none', color: '#fff', fontWeight: 700, fontSize: '14px', cursor: 'pointer',
+              boxShadow: '0 4px 16px rgba(249, 115, 22, 0.35)'
+            }}
+          >
+            Abrir Gestor de Proyectos
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`view-container escriba-editor-container ${embedded ? 'embedded-mode' : ''}`} style={{ padding: embedded ? '10px' : '20px', color: 'var(--text-primary, #ffffff)', height: '100%', display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto', background: 'transparent' }}>
@@ -321,6 +409,22 @@ export default function EscribaEditorView({ onNavigate, onSendMessage, onSelectC
               style={{ padding: '6px 14px', borderRadius: '6px', fontWeight: 600, fontSize: '12px', cursor: 'pointer' }}
             >
               Cargar Borrador (.txt, .md)
+            </button>
+            <button
+              onClick={handleExportManuscript}
+              style={{
+                padding: '6px 14px',
+                borderRadius: '6px',
+                background: 'rgba(249, 115, 22, 0.15)',
+                border: '1px solid rgba(249, 115, 22, 0.4)',
+                color: '#fb923c',
+                fontWeight: 600,
+                fontSize: '12px',
+                cursor: 'pointer'
+              }}
+              title="Descargar manuscrito completo en Markdown (.md)"
+            >
+              Exportar (.md)
             </button>
             <button
               onClick={handleSaveChapter}
@@ -383,8 +487,9 @@ export default function EscribaEditorView({ onNavigate, onSendMessage, onSelectC
                         <button
                           onClick={(e) => { e.stopPropagation(); handleDeleteChapter(chap.id); }}
                           style={{ background: 'transparent', border: 'none', color: 'var(--text-muted, #94a3b8)', cursor: 'pointer', fontSize: '11px' }}
+                          title="Eliminar capitulo"
                         >
-                          ✕
+                          X
                         </button>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted, #64748b)' }}>
@@ -659,7 +764,7 @@ ${content}`], { type: 'text/markdown' });
                       onClick={() => setShowSelectionMenu(false)}
                       style={{ background: 'none', border: 'none', color: 'var(--text-muted, #94a3b8)', cursor: 'pointer', fontSize: '12px' }}
                     >
-                      ✕
+                      X
                     </button>
                   </div>
 
@@ -853,7 +958,7 @@ ${content}`], { type: 'text/markdown' });
                     cursor: 'pointer'
                   }}
                 >
-                  ✕ Cerrar
+                  Cerrar
                 </button>
               </div>
             </div>

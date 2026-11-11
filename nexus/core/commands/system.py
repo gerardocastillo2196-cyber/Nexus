@@ -12,13 +12,13 @@ from core.terminal import run_terminal_command
 
 
 _MANUAL = """
-# 🪼 Jellyfish OS v6.9.15 — Manual del Usuario
+# [JELLYFISH] Jellyfish OS v6.9.15 — Manual del Usuario
 
 Jellyfish OS v6.9.15 es un sistema operativo y framework corporativo de agentes técnicos cognitivos impulsados por IA. Integra el **Enjambre Multi-Agencia (Swarm Architecture)** con enrutamiento heterogéneo (Ollama, Gemini 3.x Flash, Claude, Groq, OpenAI), ejecución autónoma y auto-reparación determinística (Auto-ReAct & Auto-Healing), recuperación de código vectorial con AST Splitter (RAG) y el **Mega Planner** para orquestar desarrollos y proyectos de software complejos en entornos Linux.
 
 ---
 
-## 📚 1. CONCEPTOS FUNDAMENTALES & ARQUITECTURA SWARM
+## [FUENTES] 1. CONCEPTOS FUNDAMENTALES & ARQUITECTURA SWARM
 
 **A. Enrutador Heterogéneo (Swarm Router)**
 En v6.9.15, los agentes se organizan en **Agencies & Swarms**. El `SwarmRouter` enruta cada rol al modelo y proveedor más eficiente:
@@ -40,7 +40,7 @@ Cuando los agentes proponen comandos de terminal o modificaciones sobre el proye
 
 ---
 
-## ⚙️ 2. CONFIGURACIÓN DEL SISTEMA
+## [SISTEMA] 2. CONFIGURACIÓN DEL SISTEMA
 
 ### `/model` (alias: `/m`) — Selector Interactivo TUI de Modelos & Swarm
 *   Abre el selector interactivo para cambiar modelos generales, de planificación o enrutamiento híbrido entre Ollama (locales) y nube (Gemini, OpenRouter, Claude, Groq, OpenAI).
@@ -60,7 +60,7 @@ Cuando los agentes proponen comandos de terminal o modificaciones sobre el proye
 
 ---
 
-## 🧠 3. GESTIÓN DEL RAG Y CONTEXTO
+## [ORQUESTADOR] 3. GESTIÓN DEL RAG Y CONTEXTO
 
 ### `/add` — Ingesta e Indexación Auto-Activada
 *   `/add`: Abre explorador de archivos. Al ingresar una carpeta, activa el motor RAG del proyecto e indexa inteligentemente mediante AST.
@@ -77,26 +77,26 @@ Cuando los agentes proponen comandos de terminal o modificaciones sobre el proye
 
 ---
 
-## 🤖 4. ORQUESTADOR MULTI-AGENTE & MEGA PLANNER
+## [IA] 4. ORQUESTADOR MULTI-AGENTE & MEGA PLANNER
 
 ### `/research <consulta>` — Investigación Autónoma Multi-Agente
 Pipeline en 4 etapas para consultas arquitectónicas o técnicas profundas sobre tu repositorio:
-1.  **🗺 Lead Planner:** Descomposición algorítmica del problema y planificación en JSON.
-2.  **🔍 Search Agents:** Consulta reactiva y silenciosa en la base de conocimiento local (RAG).
-3.  **✍ Lead Synthesizer:** Redacción de informe con streaming interactivo TUI.
-4.  **📚 Citation Agent:** Validación de referencias con enlaces directos `file://`.
+1.  **[PLAN] Lead Planner:** Descomposición algorítmica del problema y planificación en JSON.
+2.  **[BUSQUEDA] Search Agents:** Consulta reactiva y silenciosa en la base de conocimiento local (RAG).
+3.  **[INPUT] Lead Synthesizer:** Redacción de informe con streaming interactivo TUI.
+4.  **[FUENTES] Citation Agent:** Validación de referencias con enlaces directos `file://`.
 
 ### `/auto <descripción>` (alias: `/build`) — Agencia Autónoma de Desarrollo con Mega Planner
 Orquesta el ciclo de vida de ingeniería y sprint completo con 5 agentes cognitivos especializados:
-1.  **📝 Product Owner:** Redacción del `BACKLOG.md` con historias de usuario priorizadas **(✋ Checkpoint de aprobación)**.
-2.  **📋 Scrum Master & Mega Planner:** Descomposición estructural y creación del tablero `SPRINT_BOARD.md` con tareas secuenciales.
-3.  **🏗️ Arquitecto:** Diseño e infraestructura en `ARCHITECTURE.md` (con Sprint 0 / US-000 obligatorio para configuración base).
-4.  **💻 Developer:** Desarrollo e implementación granular (`IMPLEMENTATION_PLAN.md`).
-5.  **🧪 QA Engineer:** Estrategia de validación y testeo continuo (`TEST_PLAN.md`) supervisada por Circuit Breaker (El Juez).
+1.  **[NOTA] Product Owner:** Redacción del `BACKLOG.md` con historias de usuario priorizadas **([STOP] Checkpoint de aprobación)**.
+2.  **[LISTA] Scrum Master & Mega Planner:** Descomposición estructural y creación del tablero `SPRINT_BOARD.md` con tareas secuenciales.
+3.  **[ARQUITECTURA] Arquitecto:** Diseño e infraestructura en `ARCHITECTURE.md` (con Sprint 0 / US-000 obligatorio para configuración base).
+4.  **[DEV] Developer:** Desarrollo e implementación granular (`IMPLEMENTATION_PLAN.md`).
+5.  **[TEST] QA Engineer:** Estrategia de validación y testeo continuo (`TEST_PLAN.md`) supervisada por Circuit Breaker (El Juez).
 
 ---
 
-## 🛠️ 5. AGENTES Y HABILIDADES (SKILLS)
+## [COMPILACION] 5. AGENTES Y HABILIDADES (SKILLS)
 
 ### `/agent` (alias: `/a`) — Taller de Agencias & Personalidades
 *   Administra las agencias especializadas (DEVELOPMENT, MARKETING, etc.) y carga roles persistenes desde archivos `.md`.
@@ -109,7 +109,7 @@ Orquesta el ciclo de vida de ingeniería y sprint completo con 5 agentes cogniti
 
 ---
 
-## 📁 6. PROYECTOS, AISLAMIENTO VIRTUAL & GUÍAS
+## [DIR] 6. PROYECTOS, AISLAMIENTO VIRTUAL & GUÍAS
 
 ### `/project <ruta>` — Gestión y Entornos `.venv`
 *   Carga un repositorio como proyecto activo en Jellyfish. Crea de manera automática un entorno virtual Python `.venv` aislado del sistema operativo raíz y aplica bloqueos concurrentes (locks) contra colisiones temporales.
@@ -122,7 +122,7 @@ Orquesta el ciclo de vida de ingeniería y sprint completo con 5 agentes cogniti
 
 ---
 
-## 🚀 7. HERRAMIENTAS DE SISTEMA & PLUGIN SANDBOXING
+## [INICIO] 7. HERRAMIENTAS DE SISTEMA & PLUGIN SANDBOXING
 
 ### `/run` (alias: `/r`) — Terminal Seguro Integrado
 *   Ejecuta comandos Bash con truncamiento inteligente en logs e inspección de seguridad en tiempo real.
@@ -136,7 +136,7 @@ Orquesta el ciclo de vida de ingeniería y sprint completo con 5 agentes cogniti
 
 ---
 
-## 🔑 8. VARIABLES DE ENTORNO AVANZADAS (`.env`)
+## [ENV] 8. VARIABLES DE ENTORNO AVANZADAS (`.env`)
 
 | Variable | Default | Descripción |
 |---|---|---|
@@ -150,7 +150,7 @@ Orquesta el ciclo de vida de ingeniería y sprint completo con 5 agentes cogniti
 
 ---
 
-## ⚡ REFERENCIA RÁPIDA DE COMANDOS v6.9.15
+## [ACCION] REFERENCIA RÁPIDA DE COMANDOS v6.9.15
 
 | Comando | Alias | Función |
 |---|---|---|
@@ -186,7 +186,7 @@ def handle_system_command(command: str, arg: str, state, plugins, display_header
         tui_engine.clear_scroll_region()
         tui_engine.print_welcome_logo()
         display_header_func(force=True)
-        console.print("🪼 Guías del proyecto DESACTIVADAS. Escribe /gon para volver a activarlas.")
+        console.print("[JELLYFISH] Guías del proyecto DESACTIVADAS. Escribe /gon para volver a activarlas.")
 
     elif command == "/gon":
         state.show_guides = True
@@ -231,7 +231,7 @@ def _handle_errors_command(state, display_header_func) -> None:
     
     errors = getattr(state, "captured_errors", [])
     if not errors:
-        console.print("✓ No se han capturado errores en esta sesión.")
+        console.print("[OK] No se han capturado errores en esta sesión.")
         return
 
     handle_exit_flow(state)

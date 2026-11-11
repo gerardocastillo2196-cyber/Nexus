@@ -4,8 +4,7 @@ const NODE_TYPES = [
   { id: 'character', label: 'Personaje', color: '#818cf8', icon: '' },
   { id: 'location', label: 'Lugar', color: '#34d399', icon: '' },
   { id: 'faction', label: 'Facción', color: '#f59e0b', icon: '' },
-  { id: 'event', label: 'Evento', color: '#ef4444', icon: '' },
-  { id: 'analysis_tool', label: 'Herramienta IA', color: '#a855f7', icon: '' }
+  { id: 'event', label: 'Evento', color: '#ef4444', icon: '' }
 ];
 
 export default function EscribaGraphView({ onNavigate, onSendMessage }) {
@@ -17,6 +16,11 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState(false);
 
+  // Modal para Nodos Puente (Nexo Topológico)
+  const [nexusModalOpen, setNexusModalOpen] = useState(false);
+  const [nexusData, setNexusData] = useState(null);
+  const [nexusLoading, setNexusLoading] = useState(false);
+
   // Form states
   const [newNodeLabel, setNewNodeLabel] = useState('');
   const [newNodeType, setNewNodeType] = useState('character');
@@ -26,6 +30,9 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
   const [linkSource, setLinkSource] = useState('');
   const [linkTarget, setLinkTarget] = useState('');
   const [linkLabel, setLinkLabel] = useState('ALIANZA');
+  const [linkDesc, setLinkDesc] = useState('');
+  const [linkDirection, setLinkDirection] = useState('source_to_target');
+  const [linkIntensity, setLinkIntensity] = useState('Alta');
   const [isExtracting, setIsExtracting] = useState(false);
   const [extractFeedback, setExtractFeedback] = useState('');
 
@@ -119,7 +126,10 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
         body: JSON.stringify({
           source: linkSource,
           target: linkTarget,
-          label: linkLabel.toUpperCase().trim() || 'RELACIÓN'
+          label: linkLabel.toUpperCase().trim() || 'RELACIÓN',
+          description: linkDesc.trim(),
+          direction: linkDirection,
+          intensity: linkIntensity
         })
       });
       if (res.ok) {
@@ -127,6 +137,8 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
         if (data.graph) setGraphData(data.graph);
         else fetchGraph();
         setShowLinkModal(false);
+        setLinkDesc('');
+        setLinkLabel('ALIANZA');
       }
     } catch (err) {
       console.error('Error creando relación:', err);
@@ -268,18 +280,29 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
 
         <button
           onClick={async () => {
-            const selIds = graphData.nodes.slice(0, 3).map(n => n.id);
+            setNexusLoading(true);
+            setNexusModalOpen(true);
             try {
-              const res = await fetch('/api/escriba/nexus');
-              const data = await res.json();
-              alert(`Nexo Analítico (Intersección Topológica):\nSe encontraron ${data.count} entidades compartidas en el cruce de los lentes seleccionados.`);
+              const bodyPayload = selectedNode ? JSON.stringify({ lens_ids: [selectedNode.id] }) : undefined;
+              const res = await fetch('/api/escriba/nexus', {
+                method: bodyPayload ? 'POST' : 'GET',
+                headers: bodyPayload ? { 'Content-Type': 'application/json' } : undefined,
+                body: bodyPayload
+              });
+              if (res.ok) {
+                const data = await res.json();
+                setNexusData(data);
+              }
             } catch (err) {
-              console.error('Error calculando nexo:', err);
+              console.error('Error calculando nodos puente:', err);
+            } finally {
+              setNexusLoading(false);
             }
           }}
-          style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '12px', background: 'rgba(168, 85, 247, 0.2)', border: '1px solid #a855f7', color: '#d8b4fe', cursor: 'pointer', fontWeight: 600 }}
+          style={{ padding: '6px 12px', borderRadius: '6px', fontSize: '12px', background: 'rgba(168, 85, 247, 0.2)', border: '1px solid #a855f7', color: '#d8b4fe', cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          title={selectedNode ? `Calcula qué entidades sirven de puente entre '${selectedNode.label}' y el resto del mundo` : "Calcula qué personajes o facciones actúan como puentes o intermediarios entre los diferentes bandos"}
         >
-          Nexo Analítico (0 Tokens)
+          <span>{selectedNode ? `Nodos Puente de '${selectedNode.label}'` : 'Nodos Conectores / Puente'}</span>
         </button>
 
         <button
@@ -338,8 +361,11 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
           ) : (
             <svg width="100%" height="460" viewBox="0 0 760 480" style={{ width: '100%', height: '460px' }}>
               <defs>
-                <marker id="arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(255,255,255,0.4)" />
+                <marker id="arrow" viewBox="0 0 10 10" refX="26" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                  <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="#818cf8" />
+                </marker>
+                <marker id="arrow-bi" viewBox="0 0 10 10" refX="-16" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+                  <path d="M 9 1.5 L 0 5 L 9 8.5 z" fill="#818cf8" />
                 </marker>
               </defs>
 
@@ -354,37 +380,44 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
                 const midX = (srcNode.px + tgtNode.px) / 2;
                 const midY = (srcNode.py + tgtNode.py) / 2;
                 const isSelected = selectedNode && (selectedNode.id === srcNode.id || selectedNode.id === tgtNode.id);
+                const isBi = link.direction === 'bidirectional';
+                const dirArrow = isBi ? '<->' : '->';
+                const labelText = `${dirArrow} ${link.label}`;
+                const pillWidth = Math.max(76, labelText.length * 7.5);
 
                 return (
-                  <g key={link.id || `${link.source}-${link.target}`}>
+                  <g key={link.id || `${link.source}-${link.target}-${link.label}`} style={{ cursor: 'pointer' }}>
+                    <title>{`[${isBi ? 'Relación Recíproca <->' : 'Relación Dirigida ->'}]\n${srcNode.label} ${dirArrow} ${tgtNode.label}\nEtiqueta: ${link.label}${link.description ? `\nDescripción: ${link.description}` : ''}`}</title>
                     <line
                       x1={srcNode.px}
                       y1={srcNode.py}
                       x2={tgtNode.px}
                       y2={tgtNode.py}
-                      stroke={isSelected ? '#a5b4fc' : 'rgba(255,255,255,0.2)'}
-                      strokeWidth={isSelected ? '2.5' : '1.5'}
+                      stroke={isSelected ? '#a5b4fc' : (isBi ? '#c084fc' : 'rgba(129, 140, 248, 0.45)')}
+                      strokeWidth={isSelected ? '2.5' : '1.8'}
                       strokeDasharray={link.label.includes('SECRETA') ? '4 4' : 'none'}
                       markerEnd="url(#arrow)"
+                      markerStart={isBi ? 'url(#arrow-bi)' : undefined}
                     />
                     <rect
-                      x={midX - 35}
+                      x={midX - pillWidth / 2}
                       y={midY - 10}
-                      width="70"
+                      width={pillWidth}
                       height="18"
-                      rx="4"
-                      fill="rgba(15, 23, 42, 0.85)"
-                      stroke="rgba(255,255,255,0.1)"
+                      rx="5"
+                      fill="rgba(15, 23, 42, 0.9)"
+                      stroke={isSelected ? '#a5b4fc' : (isBi ? '#c084fc' : 'rgba(129, 140, 248, 0.35)')}
+                      strokeWidth="1"
                     />
                     <text
                       x={midX}
-                      y={midY + 2}
+                      y={midY + 2.5}
                       textAnchor="middle"
-                      fill={isSelected ? '#a5b4fc' : '#94a3b8'}
+                      fill={isSelected ? '#ffffff' : (isBi ? '#e9d5ff' : '#cbd5e1')}
                       fontSize="9"
-                      fontWeight="600"
+                      fontWeight="700"
                     >
-                      {link.label}
+                      {labelText}
                     </text>
                   </g>
                 );
@@ -457,7 +490,7 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
                 onClick={() => setSelectedNode(null)}
                 style={{ background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' }}
               >
-                ✕
+                X
               </button>
             </div>
 
@@ -469,15 +502,45 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
             )}
 
             <div>
-              <span style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '4px' }}>Contexto Narrativo:</span>
-              <p style={{ fontSize: '13px', color: '#cbd5e1', margin: 0, lineHeight: 1.5, background: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '6px' }}>
+              <span style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '4px', fontWeight: 600 }}>Contexto Narrativo:</span>
+              <p style={{ fontSize: '13px', color: '#cbd5e1', margin: 0, lineHeight: 1.5, background: 'rgba(0,0,0,0.25)', padding: '10px', borderRadius: '6px', borderLeft: `3px solid ${getNodeColor(selectedNode.type)}` }}>
                 {selectedNode.attributes?.context || 'Sin descripción contextual especificada.'}
               </p>
             </div>
 
+            {/* Deep Attributes Breakdown */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
+              {(selectedNode.attributes?.personality || selectedNode.attributes?.ideology || selectedNode.attributes?.atmosphere) && (
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '8px 10px', borderRadius: '6px' }}>
+                  <span style={{ color: '#94a3b8', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
+                    {selectedNode.type === 'character' ? 'Psicología y Voz:' : selectedNode.type === 'faction' ? 'Ideología:' : 'Atmósfera:'}
+                  </span>
+                  <span style={{ color: '#e2e8f0' }}>{selectedNode.attributes.personality || selectedNode.attributes.ideology || selectedNode.attributes.atmosphere}</span>
+                </div>
+              )}
+
+              {(selectedNode.attributes?.motivations || selectedNode.attributes?.goals || selectedNode.attributes?.significance) && (
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '8px 10px', borderRadius: '6px' }}>
+                  <span style={{ color: '#94a3b8', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
+                    {selectedNode.type === 'character' ? 'Motivaciones:' : selectedNode.type === 'faction' ? 'Objetivos:' : 'Importancia:'}
+                  </span>
+                  <span style={{ color: '#e2e8f0' }}>{selectedNode.attributes.motivations || selectedNode.attributes.goals || selectedNode.attributes.significance}</span>
+                </div>
+              )}
+
+              {(selectedNode.attributes?.secrets || selectedNode.attributes?.controlling_faction || selectedNode.attributes?.resources || selectedNode.attributes?.consequences) && (
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '8px 10px', borderRadius: '6px' }}>
+                  <span style={{ color: '#fbbf24', fontWeight: 600, display: 'block', marginBottom: '2px' }}>
+                    {selectedNode.type === 'character' ? 'Secretos / Vulnerabilidades:' : selectedNode.type === 'location' ? 'Dominio / Control:' : selectedNode.type === 'faction' ? 'Recursos:' : 'Consecuencias:'}
+                  </span>
+                  <span style={{ color: '#fef3c7' }}>{selectedNode.attributes.secrets || selectedNode.attributes.controlling_faction || selectedNode.attributes.resources || selectedNode.attributes.consequences}</span>
+                </div>
+              )}
+            </div>
+
             {/* Direct Connections */}
             <div>
-              <span style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '6px' }}>Relaciones Directas:</span>
+              <span style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '6px', fontWeight: 600 }}>Relaciones Directas:</span>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
                 {graphData.links
                   .filter(l => {
@@ -491,16 +554,32 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
                     const s = String(l.source || '').toLowerCase().trim();
                     const nid = String(selectedNode.id || '').toLowerCase().trim();
                     const nlab = String(selectedNode.label || '').toLowerCase().trim();
-                    const otherKey = (s === nid || s === nlab) ? l.target : l.source;
+                    const isOutgoing = (s === nid || s === nlab);
+                    const isBi = l.direction === 'bidirectional';
+                    const otherKey = isOutgoing ? l.target : l.source;
                     const otherKeyLower = String(otherKey || '').toLowerCase().trim();
                     const otherNode = graphData.nodes.find(n => 
                       String(n.id || '').toLowerCase().trim() === otherKeyLower || 
                       String(n.label || '').toLowerCase().trim() === otherKeyLower
                     );
+                    const directionText = isBi ? '[Recíproca <->]' : (isOutgoing ? '[Saliente ->]' : '[<- Entrante]');
+                    const directionColor = isBi ? '#c084fc' : (isOutgoing ? '#38bdf8' : '#34d399');
+
                     return (
-                      <div key={l.id || `${l.source}-${l.target}-${l.label}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.03)', padding: '6px 10px', borderRadius: '4px', fontSize: '12px' }}>
-                        <span style={{ color: '#a5b4fc', fontWeight: 600 }}>{l.label}</span>
-                        <span style={{ color: '#fff' }}>{otherNode ? otherNode.label : otherKey}</span>
+                      <div
+                        key={l.id || `${l.source}-${l.target}-${l.label}`}
+                        onClick={() => otherNode && setSelectedNode(otherNode)}
+                        style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: 'rgba(255,255,255,0.04)', padding: '8px 10px', borderRadius: '6px', fontSize: '12px', cursor: otherNode ? 'pointer' : 'default', borderLeft: `3px solid ${directionColor}` }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: directionColor, fontWeight: 700, fontSize: '11px' }}>{directionText} {l.label}</span>
+                          <span style={{ color: '#fff', fontWeight: 600 }}>{otherNode ? otherNode.label : otherKey}</span>
+                        </div>
+                        {l.description ? (
+                          <span style={{ fontSize: '11px', color: '#cbd5e1', lineHeight: 1.4 }}>{l.description}</span>
+                        ) : (
+                          <span style={{ fontSize: '10px', color: '#64748b', fontStyle: 'italic' }}>Sin descripción detallada.</span>
+                        )}
                       </div>
                     );
                   })}
@@ -519,6 +598,13 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
                 style={{ width: '100%', padding: '8px 12px', background: 'rgba(99, 102, 241, 0.2)', border: '1px solid #6366f1', color: '#a5b4fc', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px' }}
               >
                 Simular Efecto Dominó con IA
+              </button>
+
+              <button
+                onClick={() => onNavigate('escriba_entities')}
+                style={{ width: '100%', padding: '8px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '12px' }}
+              >
+                Ver en Personajes y Facciones
               </button>
 
               <button
@@ -652,6 +738,29 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
               </select>
             </div>
 
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Dirección de la Relación:</label>
+              <select
+                value={linkDirection}
+                onChange={(e) => setLinkDirection(e.target.value)}
+                style={{ width: '100%', padding: '8px 12px', background: '#1e293b', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', color: '#fff' }}
+              >
+                <option value="source_to_target">Unidireccional: Origen -&gt; Destino</option>
+                <option value="bidirectional">Recíproca / Mutua: Ambos sentidos (&lt;-&gt;)</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px' }}>Descripción de la Relación o Causa:</label>
+              <textarea
+                value={linkDesc}
+                onChange={(e) => setLinkDesc(e.target.value)}
+                placeholder="Describe la dinámica dramática, pacto, motivo de rivalidad o contexto narrativo..."
+                rows={3}
+                style={{ width: '100%', padding: '8px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '6px', color: '#fff', fontSize: '12px', resize: 'vertical' }}
+              />
+            </div>
+
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
               <button
                 type="button"
@@ -668,6 +777,83 @@ export default function EscribaGraphView({ onNavigate, onSendMessage }) {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* MODAL: NODOS PUENTE (NEXO TOPOLÓGICO) */}
+      {nexusModalOpen && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000, padding: '20px' }}>
+          <div style={{ background: '#0f172a', border: '1px solid rgba(168, 85, 247, 0.4)', borderRadius: '14px', width: '100%', maxWidth: '580px', padding: '24px', display: 'flex', flexDirection: 'column', gap: '14px', boxShadow: '0 20px 50px rgba(0,0,0,0.6)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid rgba(255,255,255,0.1)', pb: '12px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', color: '#d8b4fe', fontWeight: 700 }}>
+                  Nodos Conectores & Puentes Narrativos
+                </h3>
+                <span style={{ fontSize: '12px', color: '#94a3b8' }}>
+                  Análisis estructural de intermediarios y puntos clave de la historia
+                </span>
+              </div>
+              <button type="button" onClick={() => setNexusModalOpen(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' }}>X</button>
+            </div>
+
+            <div style={{ background: 'rgba(168, 85, 247, 0.08)', border: '1px solid rgba(168, 85, 247, 0.25)', borderRadius: '8px', padding: '12px 14px', fontSize: '12.5px', color: '#cbd5e1', lineHeight: 1.5 }}>
+              <strong style={{ color: '#d8b4fe', display: 'block', marginBottom: '4px' }}>¿Qué hace esta función?</strong>
+              Calcula matemáticamente qué personajes o lugares se encuentran en el cruce de múltiples alianzas y bandos. Estas entidades actúan como <strong>bisagras o puentes narrativos</strong>: si un personaje puente es traicionado, arrestado o cambia de bando, detona un colapso en cadena en la trama.
+            </div>
+
+            {nexusLoading ? (
+              <div style={{ textAlign: 'center', padding: '28px', color: '#a5b4fc', fontSize: '13px' }}>
+                Calculando intersecciones topológicas de la red...
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '280px', overflowY: 'auto' }}>
+                {nexusData?.nexus_entities?.length > 0 ? (
+                  nexusData.nexus_entities.map((ent, idx) => (
+                    <div key={idx} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc' }}>{ent.label}</span>
+                          <span style={{ fontSize: '11px', textTransform: 'uppercase', padding: '2px 6px', borderRadius: '4px', background: 'rgba(168, 85, 247, 0.2)', color: '#d8b4fe', fontWeight: 600 }}>{ent.type}</span>
+                        </div>
+                        {ent.attributes?.role && (
+                          <span style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginTop: '2px' }}>{ent.attributes.role}</span>
+                        )}
+                        {ent.bridge_summary && (
+                          <span style={{ fontSize: '11.5px', color: '#c084fc', display: 'block', marginTop: '4px', lineHeight: 1.4 }}>
+                            {ent.bridge_summary}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => {
+                          const n = graphData.nodes.find(nd => nd.id === ent.id || nd.label === ent.label);
+                          if (n) setSelectedNode(n);
+                          setNexusModalOpen(false);
+                        }}
+                        style={{ padding: '6px 12px', background: 'rgba(168, 85, 247, 0.2)', border: '1px solid #a855f7', color: '#d8b4fe', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}
+                      >
+                        Inspeccionar
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px', color: '#94a3b8', fontSize: '13px' }}>
+                    {nexusData?.analysis || 'No se detectaron nodos puente todavía. Agrega más entidades y relaciones entre ellas para calcular la topología.'}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+              <button
+                type="button"
+                onClick={() => setNexusModalOpen(false)}
+                style={{ padding: '8px 18px', background: '#a855f7', border: 'none', borderRadius: '6px', color: '#fff', fontWeight: 700, cursor: 'pointer', fontSize: '12px' }}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

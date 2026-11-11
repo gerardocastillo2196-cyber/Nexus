@@ -114,8 +114,18 @@ export default function Sidebar({
     return () => clearInterval(interval);
   }, [state?.escriba_active, activeView]);
 
-  const activeEscribaProject = escribaProjects.find(p => p.active);
-  const hasActiveEscribaProject = !!activeEscribaProject;
+  const activeEscribaProject = escribaProjects.find(p => p.active) || (
+    state?.active_project && state.active_project !== 'Sin proyecto' && state.active_project !== 'Ninguno' && state.active_project.trim() !== ''
+      ? { id: state.active_project, name: state.active_project_name || state.active_project }
+      : null
+  );
+  const hasActiveEscribaProject = Boolean(
+    activeEscribaProject &&
+    state?.active_project &&
+    state.active_project !== 'Sin proyecto' &&
+    state.active_project !== 'Ninguno' &&
+    state.active_project.trim() !== ''
+  );
 
   const handleResizeStart = (e) => {
     e.preventDefault();
@@ -257,29 +267,33 @@ export default function Sidebar({
             {/* GRUPO SUPERIOR */}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
               {/* 1. Chat Nuevo */}
-              <button
-                className="collapsed-icon-btn"
-                onClick={handleNewChatClick}
-                title="Chat Nuevo (Desplegar barra lateral)"
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 5v14m-7-7h14"/>
-                </svg>
-              </button>
+              {(!isEscribaMode || hasActiveEscribaProject) && (
+                <button
+                  className="collapsed-icon-btn"
+                  onClick={handleNewChatClick}
+                  title="Chat Nuevo (Desplegar barra lateral)"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 5v14m-7-7h14"/>
+                  </svg>
+                </button>
+              )}
 
               {/* 2. Lista de Chats */}
-              <button
-                className="collapsed-icon-btn"
-                onClick={() => {
-                  onNavigate('chat');
-                  setIsCollapsed(false);
-                }}
-                title={`Chats (${sortedSessions.length}) — Desplegar barra lateral`}
-              >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                </svg>
-              </button>
+              {(!isEscribaMode || hasActiveEscribaProject) && (
+                <button
+                  className="collapsed-icon-btn"
+                  onClick={() => {
+                    onNavigate('chat');
+                    setIsCollapsed(false);
+                  }}
+                  title={`Chats (${sortedSessions.length}) — Desplegar barra lateral`}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                  </svg>
+                </button>
+              )}
 
               {/* 3. Jellyfish (Si activo) */}
               {Boolean(state?.scrum_active) && (
@@ -376,13 +390,20 @@ export default function Sidebar({
                       <span className="nav-item-text">Gestor de Proyectos</span>
                     </button>
 
-                    {hasActiveEscribaProject ? (
+                    {hasActiveEscribaProject && (
                       <>
+                        <button 
+                          className={`sidebar-nav-item escriba-tool-item ${activeView === 'escriba_editor' ? 'selected' : ''}`}
+                          onClick={() => onNavigate('escriba_editor')}
+                        >
+                          <span className="nav-item-text">Canva de Escritura</span>
+                        </button>
+
                         <button 
                           className={`sidebar-nav-item escriba-tool-item ${activeView === 'escriba_dashboard' ? 'selected' : ''}`}
                           onClick={() => onNavigate('escriba_dashboard')}
                         >
-                          <span className="nav-item-text">Tablero de Trabajo & Canva</span>
+                          <span className="nav-item-text">Tablero de Trabajo</span>
                         </button>
 
                         <button 
@@ -412,18 +433,7 @@ export default function Sidebar({
                         >
                           <span className="nav-item-text">Debate Multi-Modelo (Ensamble)</span>
                         </button>
-
-                        <button 
-                          className={`sidebar-nav-item escriba-tool-item ${activeView === 'escriba_marketplace' ? 'selected' : ''}`}
-                          onClick={() => onNavigate('escriba_marketplace')}
-                        >
-                          <span className="nav-item-text">Tienda & Plantillas</span>
-                        </button>
                       </>
-                    ) : (
-                      <div style={{ padding: '8px 10px', fontSize: '0.75rem', color: '#fbbf24', background: 'rgba(251, 191, 36, 0.1)', borderRadius: '6px', border: '1px solid rgba(251, 191, 36, 0.25)', margin: '4px 0' }}>
-                        [AVISO] Crea o selecciona un proyecto activo para habilitar las herramientas de ESCRIBA y crear chats.
-                      </div>
                     )}
 
                     <button 
@@ -439,206 +449,218 @@ export default function Sidebar({
                     className="escriba-resize-handle"
                     onMouseDown={handleResizeStart}
                     style={{
-                      height: '10px',
+                      height: '8px',
                       cursor: 'ns-resize',
                       display: 'flex',
                       justifyContent: 'center',
                       alignItems: 'center',
-                      background: 'rgba(99, 102, 241, 0.15)',
+                      background: 'rgba(255, 255, 255, 0.02)',
                       borderRadius: '4px',
                       marginTop: '6px',
-                      border: '1px solid rgba(99, 102, 241, 0.3)',
-                      userSelect: 'none'
+                      border: '1px solid rgba(255, 255, 255, 0.05)',
+                      userSelect: 'none',
+                      transition: 'all 0.2s ease'
                     }}
-                    title="Arrastra hacia abajo o arriba para redimensionar la sección de herramientas de ESCRIBA"
+                    title="Arrastra para redimensionar la lista de herramientas de ESCRIBA"
                   >
-                    <div style={{ width: '36px', height: '3px', background: '#818cf8', borderRadius: '2px' }} />
+                    <div style={{ width: '32px', height: '2px', background: 'rgba(255, 255, 255, 0.2)', borderRadius: '2px' }} />
                   </div>
                 </div>
               )}
               
-              {/* BOTÓN (ABAJO DE ESCRIBA): CHAT NUEVO */}
-              <div className="top-new-chat-container">
-                <button 
-                  className={`sidebar-action-btn primary-action new-chat-standalone-btn ${isEscribaMode && !hasActiveEscribaProject ? 'disabled-action' : ''}`}
-                  onClick={handleNewChatClick}
-                  title={isEscribaMode && !hasActiveEscribaProject ? "Debes activar o crear un proyecto en ESCRIBA primero" : "+ Chat Nuevo"}
-                >
-                  <span>+ Chat Nuevo</span>
-                </button>
-              </div>
-
-              {/* SECCIÓN (CENTRO): CHATS (ESTÁTICO, NO DESPLEGABLE, MAX 10 ITEMS + SCROLL) */}
-              <div className="middle-chats-container">
-                <div className="static-chats-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span className="chats-label">Chats</span>
-                    <span className="chats-count-badge">{sortedSessions.length}</span>
+              {/* SECCIÓN DE CHATS Y NUEVO CHAT (OCULTA EN ESCRIBA SI NO HAY PROYECTO) */}
+              {(!isEscribaMode || hasActiveEscribaProject) && (
+                <>
+                  {/* BOTÓN (ABAJO DE ESCRIBA): CHAT NUEVO */}
+                  <div className="top-new-chat-container">
+                    <button 
+                      className="sidebar-action-btn primary-action new-chat-standalone-btn"
+                      onClick={handleNewChatClick}
+                      title="+ Chat Nuevo"
+                    >
+                      <span>+ Chat Nuevo</span>
+                    </button>
                   </div>
 
-                  {sortedSessions.length > 0 && (
-                    confirmDeleteAll ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ fontSize: '0.7rem', color: '#f87171', fontWeight: 600 }}>¿Vaciar?</span>
-                        <button
-                          onClick={() => {
-                            setConfirmDeleteAll(false);
-                            onDeleteAllSessions?.();
-                          }}
-                          style={{ background: '#ef4444', border: 'none', color: '#fff', borderRadius: '3px', padding: '1px 5px', fontSize: '0.7rem', cursor: 'pointer', fontWeight: 700 }}
-                          title="Confirmar eliminación de todos los chats"
-                        >
-                          Sí
-                        </button>
-                        <button
-                          onClick={() => setConfirmDeleteAll(false)}
-                          style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.7rem', cursor: 'pointer', padding: '1px 3px' }}
-                          title="Cancelar"
-                        >
-                          ✕
-                        </button>
+                  {/* SECCIÓN (CENTRO): CHATS (ESTÁTICO, NO DESPLEGABLE, MAX 10 ITEMS + SCROLL) */}
+                  <div className="middle-chats-container">
+                    <div className="static-chats-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span className="chats-label">Chats</span>
+                        <span className="chats-count-badge">{sortedSessions.length}</span>
                       </div>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmDeleteAll(true)}
-                        style={{ background: 'none', border: 'none', color: '#f87171', fontSize: '0.72rem', cursor: 'pointer', opacity: 0.85, fontWeight: 600 }}
-                        title="Eliminar todos los chats"
-                      >
-                        Vaciar todos
-                      </button>
-                    )
-                  )}
-                </div>
 
-                <div className="scrollable-chats-list">
-                  {sortedSessions.map((session) => {
-                    const isSessionActive = session.id === activeSessionId && activeView === 'chat';
-                    const isEditing = editingSessionId === session.id;
-
-                    return (
-                      <div
-                        key={session.id}
-                        className={`sidebar-nav-item session-item ${isSessionActive ? 'selected' : ''}`}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justify: 'space-between',
-                          padding: '6px 10px',
-                          gap: '6px',
-                          position: 'relative'
-                        }}
-                      >
-                        {isEditing ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
-                            <input
-                              type="text"
-                              value={editingTitle}
-                              onChange={(e) => setEditingTitle(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveRename(session.id);
-                                if (e.key === 'Escape') setEditingSessionId(null);
-                              }}
-                              autoFocus
-                              style={{
-                                flex: 1,
-                                background: 'rgba(0, 0, 0, 0.4)',
-                                border: '1px solid var(--accent-blue, #3b82f6)',
-                                borderRadius: '4px',
-                                color: '#fff',
-                                fontSize: '0.8rem',
-                                padding: '2px 6px',
-                                outline: 'none'
-                              }}
-                            />
+                      {sortedSessions.length > 0 && (
+                        confirmDeleteAll ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ fontSize: '11px', color: '#fb7185', fontWeight: 600 }}>¿Vaciar?</span>
                             <button
-                              onClick={() => handleSaveRename(session.id)}
-                              style={{ background: 'none', border: 'none', color: '#4ade80', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700, padding: '2px' }}
-                              title="Guardar Nombre"
+                              onClick={() => {
+                                setConfirmDeleteAll(false);
+                                onDeleteAllSessions?.();
+                              }}
+                              style={{ background: 'rgba(244, 63, 94, 0.2)', border: '1px solid rgba(244, 63, 94, 0.4)', color: '#fda4af', borderRadius: '4px', padding: '1px 6px', fontSize: '10px', cursor: 'pointer', fontWeight: 600 }}
+                              title="Confirmar eliminación de todos los chats"
                             >
-                              OK
+                              Sí
                             </button>
                             <button
-                              onClick={() => setEditingSessionId(null)}
-                              style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '0.85rem', padding: '2px' }}
+                              onClick={() => setConfirmDeleteAll(false)}
+                              style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '11px', cursor: 'pointer', padding: '1px 3px' }}
                               title="Cancelar"
                             >
-                              ✕
+                              X
                             </button>
                           </div>
                         ) : (
-                          <>
-                            <div
-                              style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', cursor: 'pointer' }}
-                              onClick={() => {
-                                onSwitchSession(session.id);
-                                onNavigate('chat');
-                              }}
-                            >
-                              <span className="nav-item-text" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {session.title}
-                              </span>
-                              {isSessionActive && <span className="active-dot" title="Chat Activo" />}
-                            </div>
+                          <button
+                            onClick={() => setConfirmDeleteAll(true)}
+                            style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '11px', cursor: 'pointer', fontWeight: 550, transition: 'color 0.2s ease' }}
+                            onMouseEnter={(e) => e.target.style.color = '#fb7185'}
+                            onMouseLeave={(e) => e.target.style.color = '#64748b'}
+                            title="Eliminar todos los chats"
+                          >
+                            Vaciar todos
+                          </button>
+                        )
+                      )}
+                    </div>
 
-                            {confirmDeleteId === session.id ? (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <span style={{ fontSize: '0.75rem', color: '#f87171', fontWeight: 600 }}>¿Eliminar?</span>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setConfirmDeleteId(null);
-                                    onDeleteSession?.(session.id);
+                    <div className="scrollable-chats-list">
+                      {sortedSessions.map((session) => {
+                        const isSessionActive = session.id === activeSessionId && activeView === 'chat';
+                        const isEditing = editingSessionId === session.id;
+
+                        return (
+                          <div
+                            key={session.id}
+                            className={`sidebar-nav-item session-item ${isSessionActive ? 'selected' : ''}`}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justify: 'space-between',
+                              padding: '6px 10px',
+                              gap: '6px',
+                              position: 'relative'
+                            }}
+                          >
+                            {isEditing ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', width: '100%' }}>
+                                <input
+                                  type="text"
+                                  value={editingTitle}
+                                  onChange={(e) => setEditingTitle(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveRename(session.id);
+                                    if (e.key === 'Escape') setEditingSessionId(null);
                                   }}
-                                  style={{ background: '#ef4444', border: 'none', color: '#fff', borderRadius: '3px', padding: '2px 6px', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 700 }}
-                                  title="Confirmar eliminación"
+                                  autoFocus
+                                  style={{
+                                    flex: 1,
+                                    background: 'rgba(8, 10, 18, 0.8)',
+                                    border: '1px solid rgba(99, 102, 241, 0.4)',
+                                    borderRadius: '5px',
+                                    color: '#f1f5f9',
+                                    fontSize: '12px',
+                                    padding: '3px 7px',
+                                    outline: 'none'
+                                  }}
+                                />
+                                <button
+                                  onClick={() => handleSaveRename(session.id)}
+                                  style={{ background: 'none', border: 'none', color: '#34d399', cursor: 'pointer', fontSize: '11px', fontWeight: 600, padding: '2px' }}
+                                  title="Guardar Nombre"
                                 >
-                                  Sí
+                                  OK
                                 </button>
                                 <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setConfirmDeleteId(null);
-                                  }}
-                                  style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '0.75rem', cursor: 'pointer', padding: '2px' }}
+                                  onClick={() => setEditingSessionId(null)}
+                                  style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '11px', padding: '2px' }}
                                   title="Cancelar"
                                 >
-                                  ✕
+                                  X
                                 </button>
                               </div>
                             ) : (
-                              <div className="session-actions" style={{ display: 'flex', alignItems: 'center', gap: '4px', opacity: 0.85 }}>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setEditingSessionId(session.id);
-                                    setEditingTitle(session.title);
-                                    setConfirmDeleteId(null);
+                              <>
+                                <div
+                                  style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden', cursor: 'pointer' }}
+                                  onClick={() => {
+                                    onSwitchSession(session.id);
+                                    onNavigate('chat');
                                   }}
-                                  style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.85rem', padding: '2px' }}
-                                  title="Renombrar Chat"
                                 >
-                                  ✎
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setEditingSessionId(null);
-                                    setConfirmDeleteId(session.id);
-                                  }}
-                                  style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700, padding: '2px' }}
-                                  title="Eliminar Chat"
-                                >
-                                  ✕
-                                </button>
-                              </div>
+                                  <span className="nav-item-text" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {session.title}
+                                  </span>
+                                  {isSessionActive && <span className="active-dot" title="Chat Activo" />}
+                                </div>
+
+                                {confirmDeleteId === session.id ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                    <span style={{ fontSize: '11px', color: '#fb7185', fontWeight: 600 }}>¿Borrar?</span>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setConfirmDeleteId(null);
+                                        onDeleteSession?.(session.id);
+                                      }}
+                                      style={{ background: 'rgba(244, 63, 94, 0.2)', border: '1px solid rgba(244, 63, 94, 0.4)', color: '#fda4af', borderRadius: '4px', padding: '1px 5px', fontSize: '10px', cursor: 'pointer', fontWeight: 600 }}
+                                      title="Confirmar eliminación"
+                                    >
+                                      Sí
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setConfirmDeleteId(null);
+                                      }}
+                                      style={{ background: 'none', border: 'none', color: '#64748b', fontSize: '11px', cursor: 'pointer', padding: '1px 3px' }}
+                                      title="Cancelar"
+                                    >
+                                      X
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="session-actions" style={{ display: 'flex', alignItems: 'center', gap: '4px', opacity: 0.75 }}>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingSessionId(session.id);
+                                        setEditingTitle(session.title);
+                                        setConfirmDeleteId(null);
+                                      }}
+                                      style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '11px', padding: '2px', transition: 'color 0.2s' }}
+                                      onMouseEnter={(e) => e.target.style.color = '#94a3b8'}
+                                      onMouseLeave={(e) => e.target.style.color = '#64748b'}
+                                      title="Renombrar Chat"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingSessionId(null);
+                                        setConfirmDeleteId(session.id);
+                                      }}
+                                      style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '11px', padding: '2px', transition: 'color 0.2s' }}
+                                      onMouseEnter={(e) => e.target.style.color = '#fb7185'}
+                                      onMouseLeave={(e) => e.target.style.color = '#64748b'}
+                                      title="Eliminar Chat"
+                                    >
+                                      X
+                                    </button>
+                                  </div>
+                                )}
+                              </>
                             )}
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* BOTÓN DESPLEGABLE AGENCIA JELLYFISH & AGENTES (FUERA DE CONFIGURACIONES) */}
               {Boolean(state?.scrum_active) && (
@@ -755,7 +777,7 @@ export default function Sidebar({
                           onClick={() => onNavigate('scrum')}
                         >
                           <span>Tablero & Metodología Jellyfish</span>
-                          <span className="arrow-icon">➔</span>
+                          <span className="arrow-icon">{'>'}</span>
                         </button>
                       </div>
                     </div>
@@ -785,7 +807,7 @@ export default function Sidebar({
                     }}
                   >
                     <span>Tienda</span>
-                    <span className="arrow-icon">➔</span>
+                    <span className="arrow-icon">{'>'}</span>
                   </button>
                 </div>
 
@@ -809,7 +831,7 @@ export default function Sidebar({
                           onClick={() => onNavigate('settings')}
                         >
                           <span>Modelo y Contexto</span>
-                          <span className="arrow-icon">➔</span>
+                          <span className="arrow-icon">{'>'}</span>
                         </button>
                       </div>
 
@@ -822,7 +844,7 @@ export default function Sidebar({
                               onClick={() => onNavigate('rag')}
                             >
                               <span>Motor RAG Vectorial</span>
-                              <span className="arrow-icon">➔</span>
+                              <span className="arrow-icon">{'>'}</span>
                             </button>
                           </div>
 
@@ -832,7 +854,7 @@ export default function Sidebar({
                               onClick={() => onNavigate('projects')}
                             >
                               <span>Proyecto Workspace</span>
-                              <span className="arrow-icon">➔</span>
+                              <span className="arrow-icon">{'>'}</span>
                             </button>
                           </div>
                         </>
@@ -846,8 +868,9 @@ export default function Sidebar({
 
             {/* Footer */}
             <div className="sidebar-footer">
-              <div className="footer-model-badge" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.78rem', color: '#94a3b8' }}>
-                <span style={{ fontWeight: 600, color: '#e2e8f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div className="footer-model-badge" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '11px', color: '#64748b' }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px rgba(16, 185, 129, 0.5)' }} />
+                <span style={{ fontWeight: 550, color: '#94a3b8', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {state?.model ? `${state.model} (${state?.provider || 'IA'})` : 'gemini-3.6-flash'}
                 </span>
               </div>

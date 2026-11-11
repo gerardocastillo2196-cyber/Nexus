@@ -18,6 +18,22 @@ import sys
 import signal
 import logging
 
+base_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(base_dir)
+nexus_dir = os.path.join(parent_dir, "nexus")
+
+# Auto-detectar y usar el entorno virtual .venv del proyecto
+venv_python = os.path.join(parent_dir, ".venv", "bin", "python3")
+if not os.path.exists(venv_python):
+    venv_python = os.path.join(nexus_dir, ".venv", "bin", "python3")
+
+if os.path.exists(venv_python) and sys.executable != venv_python and not os.environ.get("JELLYFISH_VENV_ACTIVATED"):
+    os.environ["JELLYFISH_VENV_ACTIVATED"] = "1"
+    os.execv(venv_python, [venv_python] + sys.argv)
+
+if os.path.isdir(nexus_dir) and nexus_dir not in sys.path:
+    sys.path.insert(0, nexus_dir)
+
 # --- Imports del Core ---
 from core.state import JellyfishState, DB_PATH, PLUGINS_DIR, AGENCY_DIR
 from core.rag_coder import CodeKnowledgeBase
@@ -239,7 +255,7 @@ event_bus.publish(EventType.SYSTEM_BOOT, {"provider": state.provider, "model": s
 if not state.model:
     from core.config import save_config_to_env, PROVIDER_CONFIGS
     default_mod = PROVIDER_CONFIGS.get(state.provider, {}).get("default_model", "qwen2.5-agent:latest")
-    console.print(f"[yellow]⚡ Asignando modelo oficial predeterminado del proveedor '{state.provider.upper()}': '{default_mod}'...[/yellow]")
+    console.print(f"[yellow][INFO] Asignando modelo oficial predeterminado del proveedor '{state.provider.upper()}': '{default_mod}'...[/yellow]")
     save_config_to_env(state, model=default_mod)
 
 # Verificar API Key si el proveedor no es Ollama
@@ -250,7 +266,7 @@ if state.provider != "ollama":
         env_var = prov_cfg["api_key_env"]
         key_val = os.getenv(env_var)
         if not key_val:
-            console.print(f"[yellow]⚠ No se detectó la API Key para el proveedor '{state.provider}' ({env_var}).[/yellow]")
+            console.print(f"[yellow][ADVERTENCIA] No se detectó la API Key para el proveedor '{state.provider}' ({env_var}).[/yellow]")
             key_val = PromptSession().prompt(f"Ingresa tu API Key para {state.provider} (se guardará de forma segura): ").strip()
             if key_val:
                 from core.crud import _save_provider_key
@@ -288,7 +304,7 @@ def refresh_header(force=True):
         project_name=proj_name,
         project_methodology=proj_methodology,
         token_budget=state.token_budget_info(),
-        llm_busy=_state_mod._llm_busy,
+        llm_busy=getattr(_state_mod, "_llm_busy", False),
         session_tokens=getattr(state, "session_tokens", 0),
         active_agency=getattr(state, "active_agency", "default"),
         state=state,
@@ -344,13 +360,13 @@ def _sentinel_forensic_boot_scan(state):
 
     console.print(Panel(
         Markdown(
-            f"### 🛡️ @Sentinel — Análisis Forense de Arranque\n\n"
+            f"### @Sentinel — Análisis Forense de Arranque\n\n"
             f"Se detectaron **{len(forensic_files)}** artefacto(s) de colapso de sesiones anteriores:\n\n"
             f"{file_list_md}\n"
             f"Estos archivos contienen trazas de errores y diagnósticos que pueden ayudar "
             f"a identificar la causa del último fallo del sistema."
         ),
-        title="[bold yellow]⚠️ ARTEFACTOS FORENSES DETECTADOS[/bold yellow]",
+        title="[bold yellow]ARTEFACTOS FORENSES DETECTADOS[/bold yellow]",
         border_style="yellow"
     ))
 
@@ -360,7 +376,7 @@ def _sentinel_forensic_boot_scan(state):
     console.print("  [3] Borrar todos los archivos forenses y continuar.")
 
     try:
-        choice = input("\n✍ Elige una opción [1-3] > ").strip()
+        choice = input("\nElige una opción [1-3] > ").strip()
     except (KeyboardInterrupt, EOFError):
         console.print("[dim]Continuando con el arranque normal...[/dim]")
         return
@@ -369,7 +385,7 @@ def _sentinel_forensic_boot_scan(state):
         for fp in forensic_files:
             basename = os.path.basename(fp)
             console.print(f"\n[bold cyan]{'─' * 60}[/bold cyan]")
-            console.print(f"[bold cyan]📄 {basename}[/bold cyan]")
+            console.print(f"[bold cyan][ARCHIVO] {basename}[/bold cyan]")
             console.print(f"[bold cyan]{'─' * 60}[/bold cyan]")
             try:
                 with open(fp, "r", encoding="utf-8", errors="ignore") as f:
@@ -385,7 +401,7 @@ def _sentinel_forensic_boot_scan(state):
         console.print("  [1] Borrar los archivos forenses y continuar.")
         console.print("  [2] Conservar los archivos y continuar.")
         try:
-            sub_choice = input("✍ Elige una opción [1-2] > ").strip()
+            sub_choice = input("Elige una opción [1-2] > ").strip()
         except (KeyboardInterrupt, EOFError):
             sub_choice = "2"
 
@@ -395,7 +411,7 @@ def _sentinel_forensic_boot_scan(state):
                     os.remove(fp)
                 except OSError:
                     pass
-            console.print("[green]✓ Archivos forenses eliminados.[/green]")
+            console.print("[green][OK] Archivos forenses eliminados.[/green]")
         else:
             console.print("[dim]Archivos conservados. Continuando con el arranque...[/dim]")
 
@@ -405,7 +421,7 @@ def _sentinel_forensic_boot_scan(state):
                 os.remove(fp)
             except OSError:
                 pass
-        console.print("[green]✓ Archivos forenses eliminados. Continuando con el arranque...[/green]")
+        console.print("[green][OK] Archivos forenses eliminados. Continuando con el arranque...[/green]")
     else:
         console.print("[dim]Continuando con el arranque normal...[/dim]")
 
@@ -425,13 +441,13 @@ def _flush_crash_reports(state):
             target_paths.append(proj_report)
         
     content = (
-        f"# 🛡️ Reporte Forense de Error — Jellyfish OS\n\n"
+        f"# Reporte Forense de Error — Jellyfish OS\n\n"
         f"**Fecha y Hora:** {datetime.datetime.now().isoformat()}\n"
         f"**Proyecto Activo:** `{getattr(state, 'active_project', 'Ninguno')}`\n"
         f"**Agente Activo:** `@{getattr(state, 'active_agent', 'default')}`\n"
         f"**Proveedor / Modelo:** `{getattr(state, 'provider', '')}` / `{getattr(state, 'model', '')}`\n\n"
         f"---\n"
-        f"## 🚨 Traza de Errores Capturados ({len(state.captured_errors)}):\n\n"
+        f"## Traza de Errores Capturados ({len(state.captured_errors)}):\n\n"
     )
     for i, err in enumerate(state.captured_errors, 1):
         content += f"### Error #{i}\n```\n{err}\n```\n\n"
@@ -463,11 +479,14 @@ def main():
     refresh_header(force=True)
 
     # Mostrar la guía del proyecto si no hay un proyecto activo o está incompleto
-    from core.crud import show_project_guide_if_needed
-    show_project_guide_if_needed(state)
+    try:
+        from core.commands.project import show_project_guide_if_needed
+        show_project_guide_if_needed(state)
+    except ImportError:
+        pass
 
     # Sprint 11 — Aislamiento y Control de Ejecución Seguro
-    console.print("[dim cyan]🛡  Modo de Aislamiento de Proyecto y Control de Ejecución Seguro Activo.[/dim cyan]")
+    console.print("[dim cyan][SEGURIDAD] Modo de Aislamiento de Proyecto y Control de Ejecución Seguro Activo.[/dim cyan]")
 
     # Sprint 8.0 — Key bindings globales (FASE 1)
     from core.terminal import get_global_keybindings
@@ -490,7 +509,7 @@ def main():
                 if os.path.exists(agent_file):
                     state.load_agent(name)
                     refresh_header()
-                    console.print(f"[green]✓ Agente cambiado a @{name}[/green]")
+                    console.print(f"[green][OK] Agente cambiado a @{name}[/green]")
                 else:
                     console.print(f"[yellow]Agente @{name} no encontrado.[/yellow]")
                 return
@@ -531,7 +550,7 @@ def main():
                 state.history.append({"role": "assistant", "content": result})
 
         except LocalLLMTimeoutError as timeout_ex:
-            console.print(f"[red]⚠ El modelo local superó el tiempo de espera (Timeout). Memoria saturada.[/red]")
+            console.print(f"[red][ERROR] El modelo local superó el tiempo de espera (Timeout). Memoria saturada.[/red]")
             logging.getLogger("jellyfish").error("Timeout del modelo local (GPU saturada): %s", timeout_ex)
         except Exception as e:
             import traceback
@@ -568,7 +587,7 @@ def main():
         from core.ui import handle_exit_flow, sync_readme_on_exit
         handle_exit_flow(state)
         sync_readme_on_exit(state)
-        console.print("[bold purple]🪼 Jellyfish desconectado. Hasta pronto.[/bold purple]")
+        console.print("[bold purple]Jellyfish desconectado. Hasta pronto.[/bold purple]")
         sys.exit(0)
 
 

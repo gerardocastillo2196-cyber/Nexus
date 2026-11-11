@@ -1,5 +1,7 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import EscribaEditorView from './EscribaEditorView';
+
+const NexusScene3D = lazy(() => import('./NexusScene3D'));
 
 const GENERAL_SUGGESTIONS = [
   'Explicar concepto',
@@ -16,6 +18,7 @@ const SCRUM_SUGGESTIONS = [
 ];
 
 const ESCRIBA_SUGGESTIONS = [
+  'Crear un Canva de escritura',
   'Personajes y lugares',
   'Simular efecto dominó',
   'Auditar inconsistencias',
@@ -66,6 +69,13 @@ export default function ChatView({
   const isScrumActive = Boolean(systemState?.scrum_active);
   const isEscribaActive = Boolean(systemState?.escriba_active);
   const hasProject = systemState?.project && systemState.project !== 'Sin proyecto';
+  const hasActiveEscribaProject = Boolean(
+    systemState?.active_project &&
+    systemState.active_project.trim() !== '' &&
+    systemState.active_project !== 'Sin proyecto' &&
+    systemState.active_project !== 'Ninguno'
+  );
+  const isEscribaNoProject = isEscribaActive && !hasActiveEscribaProject;
 
   const displayAgentName = (isEscribaActive && !isScrumActive)
     ? 'ESCRIBA'
@@ -98,6 +108,17 @@ export default function ChatView({
     subtitleText = '¿En qué deseas trabajar hoy con tus proyectos y relatos?';
   }
 
+  // Regla estricta: Si se está en ESCRIBA sin proyecto activo, redirigir de inmediato al Gestor de Proyectos
+  useEffect(() => {
+    if (isEscribaNoProject) {
+      onNavigate?.('escriba_projects');
+    }
+  }, [isEscribaNoProject, onNavigate]);
+
+  if (isEscribaNoProject) {
+    return null;
+  }
+
   const fetchScrumData = useCallback(async () => {
     try {
       setLoadingScrum(true);
@@ -125,20 +146,35 @@ export default function ChatView({
     }
   }, [initialShowScrumPanel]);
 
-  // El botón de Canva solo se muestra cuando se cree contenido en la sesión
-  useEffect(() => {
-    if (messages.length === 0) {
-      setCanvaCreated(false);
-      setShowCanvasPanel(false);
-    }
-  }, [messages.length]);
-
+  // El botón de Canva solo existe en la sesión de chat donde se creó el canva
   useEffect(() => {
     if (!isEscribaActive) {
-      setIsCanvasModeTagged(false);
+      setCanvaCreated(false);
+      setShowCanvasPanel(false);
+      return;
+    }
+    if (!messages || messages.length === 0) {
+      setCanvaCreated(false);
+      setShowCanvasPanel(false);
+      return;
+    }
+
+    const hasCanvaInCurrentChat = messages.some(m => {
+      const c = typeof m.content === 'string' ? m.content : '';
+      return (
+        c.includes('[ESCRIBA Canva') ||
+        c.includes('[Borrador Cargado]') ||
+        c.includes('Contenido Registrado en Canva') ||
+        c.includes('Capítulo Actualizado en Canva') ||
+        (c.includes('en el Canva') && (c.includes('He redactado') || c.includes('He actualizado')))
+      );
+    });
+
+    setCanvaCreated(hasCanvaInCurrentChat);
+    if (!hasCanvaInCurrentChat) {
       setShowCanvasPanel(false);
     }
-  }, [isEscribaActive]);
+  }, [messages, isEscribaActive]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -216,8 +252,8 @@ export default function ChatView({
     const text = input.trim();
     if (!text || isSubmitting) return;
 
-    if (isEscribaActive && (!systemState?.active_project || systemState.active_project.trim() === '')) {
-      alert(" Para chatear en ESCRIBA, primero debes crear o seleccionar un proyecto activo en el Gestor de Proyectos.");
+    if (isEscribaNoProject) {
+      alert("[AVISO] Para chatear en ESCRIBA, primero debes crear o seleccionar un proyecto activo en el Gestor de Proyectos.");
       onNavigate?.('escriba_projects');
       return;
     }
@@ -239,12 +275,24 @@ export default function ChatView({
       fullPrompt = `[ESCRIBA Canva — Crear Contenido] ${text}`;
     }
 
-    await onSendMessage(fullPrompt, { displayText: text });
+    const sendResult = await onSendMessage(fullPrompt, { displayText: text });
 
-    if (isCanvaPrompt) {
-      setCanvaCreated(true);
-      setCanvaRequested(true);
-      setShowCanvasPanel(true);
+    if (isCanvaPrompt && sendResult?.success !== false) {
+      const hasEscribaProj = Boolean(
+        systemState?.active_project &&
+        systemState.active_project.trim() !== '' &&
+        systemState.active_project !== 'Sin proyecto'
+      );
+      if (hasEscribaProj) {
+        setCanvaCreated(true);
+        setCanvaRequested(true);
+        setShowCanvasPanel(true);
+      } else {
+        alert("[AVISO] Para crear contenido en el Canva de ESCRIBA, primero debes crear o seleccionar un proyecto activo en el Gestor de Proyectos.");
+        onNavigate?.('escriba_projects');
+      }
+      setIsCanvasModeTagged(false);
+    } else if (sendResult?.success === false) {
       setIsCanvasModeTagged(false);
     }
     setIsSubmitting(false);
@@ -330,25 +378,26 @@ export default function ChatView({
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '4px' }}>
             <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-              Disponible en el editor del Canva.
+              Registrado y sincronizado con el Canva de Escritura.
             </span>
             <button
               type="button"
               onClick={() => {
                 setShowCanvasPanel(true);
+                if (showScrumPanel) setShowScrumPanel(false);
               }}
               style={{
-                padding: '4px 12px',
-                background: 'rgba(59, 130, 246, 0.25)',
-                border: '1px solid rgba(59, 130, 246, 0.45)',
-                color: '#60a5fa',
+                padding: '3px 10px',
+                background: 'rgba(59, 130, 246, 0.2)',
+                border: '1px solid rgba(59, 130, 246, 0.4)',
+                color: '#93c5fd',
                 borderRadius: '6px',
                 fontSize: '11px',
                 fontWeight: 600,
                 cursor: 'pointer'
               }}
             >
-              Abrir en Canva
+              {showCanvasPanel ? 'Canva Abierto' : 'Abrir en Canva'}
             </button>
           </div>
         </div>
@@ -458,14 +507,39 @@ export default function ChatView({
     e.target.value = '';
   };
 
-  const handleSelectMenuOption = (option) => {
+  const handleSelectMenuOption = async (option) => {
     setShowPlusMenu(false);
-    if (option === 'canva_open') {
-      if (canvaCreated) {
-        setShowCanvasPanel(prev => !prev);
-      } else {
-        setIsCanvasModeTagged(prev => !prev);
+    if (option === 'canva_mode_toggle' || option === 'canva_open') {
+      let currentProj = systemState?.active_project || systemState?.project;
+      if (!currentProj || currentProj === 'Sin proyecto' || currentProj.trim() === '') {
+        try {
+          const res = await fetch('/api/escriba/projects');
+          if (res.ok) {
+            const data = await res.json();
+            const projs = data.projects || [];
+            const active = projs.find(p => p.active) || projs[0];
+            if (active) {
+              await fetch(`/api/escriba/projects/switch?project_id=${active.id}`, { method: 'POST' });
+            }
+          }
+        } catch (err) {
+          console.error('Error auto-activando proyecto para canva:', err);
+        }
       }
+
+      // Activa/desactiva la etiqueta de Modo Canva para el prompt.
+      // IMPORTANTE: NO se abre el panel lateral de Canva aquí.
+      // El cuadro de Canva solo se abrirá automáticamente una vez que se genere la respuesta del contenido.
+      setIsCanvasModeTagged(prev => {
+        const nextState = !prev;
+        if (nextState) {
+          setTimeout(() => textareaRef.current?.focus(), 50);
+        }
+        return nextState;
+      });
+    } else if (option === 'canva_toggle_panel') {
+      setShowCanvasPanel(prev => !prev);
+      if (showScrumPanel) setShowScrumPanel(false);
     } else if (option === 'context_file') {
       generalFileInputRef.current?.click();
     } else if (option === 'escriba_upload') {
@@ -494,70 +568,40 @@ export default function ChatView({
           {isScrumActive && (
             <button
               type="button"
-              className={`btn btn-sm ${showScrumPanel ? 'btn-primary' : 'btn-outline'}`}
+              className={`pro-btn pro-btn-sm ${showScrumPanel ? 'pro-btn-primary' : 'pro-btn-secondary'}`}
               onClick={() => {
                 setShowScrumPanel(!showScrumPanel);
                 if (showCanvasPanel) setShowCanvasPanel(false);
               }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 14px', borderRadius: '8px', fontWeight: 600,
-                background: showScrumPanel ? '#2563eb' : 'rgba(255,255,255,0.05)',
-                border: showScrumPanel ? 'none' : '1px solid rgba(255,255,255,0.15)',
-                color: '#fff', cursor: 'pointer'
-              }}
-              title="Abrir/Cerrar Opciones del Tablero Jellyfish"
+              title="Abrir/Cerrar Tablero Jellyfish"
             >
               <span>Tablero Jellyfish</span>
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#4ade80' }} />
+              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: showScrumPanel ? '#34d399' : '#64748b' }} />
             </button>
           )}
 
+          {/* Botón de Canva: Esquina superior derecha del chat */}
           {isEscribaActive && canvaCreated && (
             <button
               type="button"
-              className={`btn btn-sm ${showCanvasPanel ? 'btn-primary' : 'btn-outline'}`}
+              className={`pro-btn pro-btn-sm ${showCanvasPanel ? 'pro-btn-amber' : 'pro-btn-secondary'}`}
               onClick={() => {
-                setShowCanvasPanel(!showCanvasPanel);
+                setShowCanvasPanel(prev => !prev);
                 if (showScrumPanel) setShowScrumPanel(false);
-              }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', padding: '6px 14px', borderRadius: '8px', fontWeight: 600,
-                background: showCanvasPanel ? '#2563eb' : 'rgba(255,255,255,0.05)',
-                border: showCanvasPanel ? 'none' : '1px solid rgba(255,255,255,0.15)',
-                color: '#fff', cursor: 'pointer'
               }}
               title="Abrir/Cerrar Canva de Escritura"
             >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M3 9h18"/>
+                <path d="M9 21V9"/>
+              </svg>
               <span>Canva</span>
+              <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: showCanvasPanel ? '#fde047' : '#64748b' }} />
             </button>
           )}
         </div>
       </header>
-
-      {/* Warning banner si se está en ESCRIBA sin proyecto activo */}
-      {isEscribaActive && (!systemState?.active_project || systemState.active_project.trim() === '') && (
-        <div style={{
-          background: 'rgba(251, 191, 36, 0.12)',
-          borderBottom: '1px solid rgba(251, 191, 36, 0.3)',
-          color: '#fbbf24',
-          padding: '10px 16px',
-          display: 'flex',
-          justify: 'space-between',
-          alignItems: 'center',
-          fontSize: '0.85rem',
-          fontWeight: 600,
-          zIndex: 10
-        }}>
-          <span> Modo ESCRIBA activo sin proyecto seleccionado. Debes seleccionar o crear un proyecto antes de interactuar.</span>
-          <button
-            className="btn btn-warning btn-sm"
-            onClick={() => onNavigate?.('escriba_projects')}
-            style={{ padding: '4px 10px', fontSize: '0.75rem', cursor: 'pointer', background: '#f59e0b', color: '#000', border: 'none', borderRadius: '4px', fontWeight: 700 }}
-          >
-             Abrir Gestor de Proyectos
-          </button>
-        </div>
-      )}
 
       {/* Main Body (Single or Split Panel Gemini Mode) */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
@@ -572,45 +616,98 @@ export default function ChatView({
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                 height: '100%', textAlign: 'center',
                 padding: (showCanvasPanel || showScrumPanel) ? '12px 10px' : '24px 16px',
-                overflowY: 'auto'
+                overflowY: 'auto',
+                position: 'relative'
               }}>
+                {/* 3D Morphing Geometric Core */}
+                <div style={{
+                  width: (showCanvasPanel || showScrumPanel) ? '180px' : '240px',
+                  height: (showCanvasPanel || showScrumPanel) ? '180px' : '240px',
+                  position: 'relative',
+                  marginBottom: '12px',
+                  pointerEvents: 'none',
+                  overflow: 'visible'
+                }}>
+                  <Suspense fallback={null}>
+                    <NexusScene3D
+                      compact={true}
+                      engine={(isEscribaActive && !isScrumActive) ? 'escriba' : (isScrumActive ? 'jellyfish' : 'nexus')}
+                    />
+                  </Suspense>
+                </div>
+
+                <div className={`pro-badge ${isEscribaActive ? 'pro-badge-amber' : (isScrumActive ? 'pro-badge-cyan' : 'pro-badge-indigo')}`} style={{ marginBottom: '14px' }}>
+                  <span className="pro-badge-dot" />
+                  {isEscribaActive ? 'Escriba Narrative Engine' : (isScrumActive ? 'Jellyfish Swarm Intelligence' : 'Nexus OS Autonomous Core')}
+                </div>
+
                 <h1 className="empty-title" style={{
-                  fontSize: (showCanvasPanel || showScrumPanel) ? '22px' : '32px',
-                  fontWeight: 300, letterSpacing: '-0.5px', marginBottom: '6px', opacity: 0.95, color: 'var(--text-primary)'
+                  fontSize: (showCanvasPanel || showScrumPanel) ? '22px' : '30px',
+                  fontWeight: 780,
+                  fontFamily: 'var(--font-display, Outfit, sans-serif)',
+                  letterSpacing: '-0.025em',
+                  marginBottom: '8px',
+                  background: isEscribaActive
+                    ? 'linear-gradient(135deg, #ffffff 40%, #fb923c 100%)'
+                    : (isScrumActive ? 'linear-gradient(135deg, #ffffff 40%, #38bdf8 100%)' : 'linear-gradient(135deg, #ffffff 40%, #a78bfa 100%)'),
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent'
                 }}>
                   {displayAgentName}
                 </h1>
                 <p className="empty-subtitle" style={{
-                  fontSize: (showCanvasPanel || showScrumPanel) ? '12px' : '13px',
-                  color: 'var(--text-muted, #94a3b8)', fontWeight: 400,
+                  fontSize: (showCanvasPanel || showScrumPanel) ? '12px' : '13.5px',
+                  color: '#8b95a5', fontWeight: 400,
                   marginBottom: (showCanvasPanel || showScrumPanel) ? '16px' : '28px',
-                  maxWidth: '440px', lineHeight: 1.4
+                  maxWidth: '460px', lineHeight: 1.6
                 }}>
-                  {isEscribaActive ? 'Arquitectura narrativa y worldbuilding.' : (isScrumActive ? 'Gestión de proyecto y desarrollo ágil.' : '¿En qué puedo ayudarte hoy?')}
+                  {isEscribaActive ? 'Arquitectura narrativa, coherencia de universo y worldbuilding multimodal.' : (isScrumActive ? 'Gestión ágil multi-agente, sprints coordinados y control de desarrollo.' : '¿En qué puedo ayudarte hoy?')}
                 </p>
 
-                <div className="suggestions-grid" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '6px', maxWidth: '480px' }}>
+                {/* Suggestions Grid */}
+                <div className="suggestions-grid" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '8px', maxWidth: '520px' }}>
                   {currentSuggestions.map((text, i) => (
-                    <button
-                      key={i}
-                      className="suggestion-chip"
-                      onClick={() => onSendMessage(text)}
-                      style={{
-                        padding: (showCanvasPanel || showScrumPanel) ? '5px 10px' : '7px 14px',
-                        fontSize: (showCanvasPanel || showScrumPanel) ? '11px' : '12px',
-                        borderRadius: '20px',
-                        background: 'var(--bg-tertiary, rgba(255,255,255,0.04))',
-                        border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
-                        color: 'var(--text-secondary, #cbd5e1)',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        fontWeight: 400
-                      }}
-                    >
-                      {text}
-                    </button>
-                  ))}
-                </div>
+                      <button
+                        key={i}
+                        className="suggestion-chip"
+                        onClick={() => {
+                          if (text === 'Crear un Canva de escritura') {
+                            setIsCanvasModeTagged(true);
+                            setTimeout(() => textareaRef.current?.focus(), 50);
+                          } else {
+                            onSendMessage(text);
+                          }
+                        }}
+                        style={{
+                          padding: (showCanvasPanel || showScrumPanel) ? '6px 12px' : '8px 16px',
+                          fontSize: (showCanvasPanel || showScrumPanel) ? '11px' : '12px',
+                          borderRadius: '20px',
+                          background: 'rgba(14, 17, 28, 0.6)',
+                          backdropFilter: 'blur(12px)',
+                          border: '1px solid rgba(255, 255, 255, 0.07)',
+                          color: '#cbd5e1',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                          fontWeight: 500,
+                          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = isEscribaActive ? 'rgba(245, 158, 11, 0.12)' : 'rgba(99, 102, 241, 0.12)';
+                          e.currentTarget.style.borderColor = isEscribaActive ? 'rgba(245, 158, 11, 0.3)' : 'rgba(99, 102, 241, 0.3)';
+                          e.currentTarget.style.color = '#ffffff';
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'rgba(14, 17, 28, 0.6)';
+                          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.07)';
+                          e.currentTarget.style.color = '#cbd5e1';
+                          e.currentTarget.style.transform = 'translateY(0)';
+                        }}
+                      >
+                        {text}
+                      </button>
+                    ))}
+                  </div>
               </div>
             ) : (
               <div className="messages-list">
@@ -733,7 +830,7 @@ export default function ChatView({
                   style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '12px', padding: '0 2px', fontWeight: 700 }}
                   title="Desactivar Modo Canva"
                 >
-                  ✕
+                  X
                 </button>
               </div>
             )}
@@ -757,8 +854,17 @@ export default function ChatView({
                 <button
                   type="button"
                   className={`plus-action-btn ${showPlusMenu ? 'active' : ''}`}
-                  onClick={() => setShowPlusMenu(!showPlusMenu)}
-                  title="Opciones adicionales"
+                  onClick={() => {
+                    if (isEscribaNoProject) {
+                      alert("[AVISO] Para interactuar en ESCRIBA, primero debes crear o seleccionar un proyecto en el Gestor de Proyectos.");
+                      onNavigate?.('escriba_projects');
+                      return;
+                    }
+                    setShowPlusMenu(!showPlusMenu);
+                  }}
+                  disabled={isEscribaNoProject}
+                  style={isEscribaNoProject ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
+                  title={isEscribaNoProject ? "Requiere un proyecto activo en ESCRIBA" : "Opciones adicionales"}
                 >
                   +
                 </button>
@@ -767,6 +873,26 @@ export default function ChatView({
                 {showPlusMenu && (
                   <div className="jellyfish-plus-menu">
                     <div className="menu-header-text">Opciones de Chat</div>
+
+                    {isEscribaActive && (
+                      <button 
+                        type="button" 
+                        className="menu-item"
+                        onClick={() => handleSelectMenuOption('canva_mode_toggle')}
+                      >
+                        <span>{isCanvasModeTagged ? 'Desactivar Modo Canva' : 'Crear en Canva (Modo Canva)'}</span>
+                      </button>
+                    )}
+
+                    {isEscribaActive && canvaCreated && (
+                      <button 
+                        type="button" 
+                        className="menu-item"
+                        onClick={() => handleSelectMenuOption('canva_toggle_panel')}
+                      >
+                        <span>{showCanvasPanel ? 'Ocultar panel Canva' : 'Abrir panel Canva'}</span>
+                      </button>
+                    )}
 
                     <button 
                       type="button" 
@@ -777,23 +903,13 @@ export default function ChatView({
                     </button>
 
                     {isEscribaActive && (
-                      <>
-                        <button 
-                          type="button" 
-                          className="menu-item"
-                          onClick={() => handleSelectMenuOption('canva_open')}
-                        >
-                          <span>Canva</span>
-                        </button>
-
-                        <button 
-                          type="button" 
-                          className="menu-item"
-                          onClick={() => handleSelectMenuOption('escriba_upload')}
-                        >
-                          <span>Cargar borrador (.txt, .md)</span>
-                        </button>
-                      </>
+                      <button 
+                        type="button" 
+                        className="menu-item"
+                        onClick={() => handleSelectMenuOption('escriba_upload')}
+                      >
+                        <span>Cargar borrador (.txt, .md)</span>
+                      </button>
                     )}
 
                     {isScrumActive && (
@@ -825,6 +941,7 @@ export default function ChatView({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
+                disabled={isSubmitting}
               />
 
               <button
@@ -832,13 +949,13 @@ export default function ChatView({
                 className="send-btn"
                 disabled={!input.trim() || isSubmitting}
               >
-                ➔
+                &gt;
               </button>
             </form>
 
             <div className="input-footer" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '10px', marginTop: '4px' }}>
               <span>
-                Nexus OS v7.0 {(isScrumActive || isEscribaActive) ? `• RAG: ${systemState?.rag_status || 'Inactivo'} • Proyecto: ${systemState?.project || 'Ninguno'}` : '• Chat Conversacional Libre'}
+                Nexus OS v7.0 {(isScrumActive || isEscribaActive) ? `• RAG: ${systemState?.rag_status || 'Inactivo'} • Proyecto: ${systemState?.active_project_name || systemState?.active_project || systemState?.project || 'Ninguno'}` : '• Chat Conversacional Libre'}
               </span>
             </div>
           </div>
@@ -886,7 +1003,7 @@ export default function ChatView({
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <button onClick={fetchScrumData} className="btn btn-outline btn-sm" style={{ fontSize: '11px', padding: '4px 8px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '6px', cursor: 'pointer' }} title="Recargar Tablero">Recargar</button>
-                <button onClick={() => setShowScrumPanel(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '14px' }}>✕</button>
+                <button onClick={() => setShowScrumPanel(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '14px' }}>X</button>
               </div>
             </div>
 
@@ -970,7 +1087,7 @@ export default function ChatView({
                 style={{ background: 'none', border: 'none', color: 'var(--text-muted, #94a3b8)', cursor: 'pointer', fontSize: '14px' }}
                 title="Cerrar panel de Canva"
               >
-                ✕
+                X
               </button>
             </div>
 
@@ -980,6 +1097,7 @@ export default function ChatView({
                 onSendMessage={onSendMessage}
                 onSelectChapter={onSelectChapter}
                 embedded={true}
+                activeProject={systemState?.active_project}
                 latestAiResponse={
                   messages.length > 0 && messages[messages.length - 1].role === 'assistant'
                     ? messages[messages.length - 1].content

@@ -157,7 +157,7 @@ class ScrumHealthMonitor:
 
         color = "green" if score >= 80 else "yellow" if score >= 50 else "red"
         lines = [
-            f"📊 **Puntaje de Salud Scrum:** [{color}]{score}/100[/{color}]",
+            f"[METRICAS] **Puntaje de Salud Scrum:** [{color}]{score}/100[/{color}]",
             f"  • **Historias en Backlog:** {diag['total_stories']} (Ready: {diag['ready_stories']} | Pendientes DoR: {diag['unvalidated_stories']})",
             f"  • **Tareas en Sprint Board:** TODO: {diag['todo_tasks']} | En Proceso: {diag['in_progress_tasks']} | DONE: {diag['done_tasks']}",
             f"  • **Registros en DAILY.md:** {diag['daily_entries_count']}",
@@ -165,15 +165,15 @@ class ScrumHealthMonitor:
         ]
 
         if diag["warnings"]:
-            lines.append("⚠️ **Advertencias Detectadas:**")
+            lines.append("[ADVERTENCIA] **Advertencias Detectadas:**")
             for w in diag["warnings"]:
                 lines.append(f"  - {w}")
             lines.append("")
 
         if diag["recommendations"]:
-            lines.append("💡 **Recomendaciones Proactivas:**")
+            lines.append("[SUGERENCIA] **Recomendaciones Proactivas:**")
             for r in diag["recommendations"]:
                 lines.append(f"  - {r}")
 
-        panel = Panel("\n".join(lines), title="[bold cyan]🪼 Diagnóstico de Salud Scrum — Jellyfish OS[/bold cyan]", border_style=color)
+        panel = Panel("\n".join(lines), title="[bold cyan][JELLYFISH] Diagnóstico de Salud Scrum — Jellyfish OS[/bold cyan]", border_style=color)
         console.print(panel)

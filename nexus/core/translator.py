@@ -54,7 +54,7 @@ class IntentTranslator:
         # 1. Compara contra el diccionario persistente (ignorando acrónimos legacy)
         for nat, comp in self.intent_map.items():
             if nat.lower().strip() == cleaned_input.lower() and not comp.startswith("[CMD:"):
-                console.print(f"[green]✓ Coincidencia encontrada en diccionario: '{nat[:40]}…' -> DSL[/green]")
+                console.print(f"[green][OK] Coincidencia encontrada en diccionario: '{nat[:40]}…' -> DSL[/green]")
                 return comp
 
         # 2. Si no hay coincidencia, llamar a @translator para sintetizar una intención compacta
@@ -118,7 +118,7 @@ class IntentTranslator:
         token_clean = response.strip()
         if "AMBIGUOUS" in token_clean.upper():
             if turn_count < MAX_TRANSLATOR_TURNS:
-                console.print("\n[yellow]⚠ El traductor detectó ambigüedad en la instrucción. Iniciando bucle de refinamiento interactivo...[/yellow]")
+                console.print("\n[yellow][ADVERTENCIA] El traductor detectó ambigüedad en la instrucción. Iniciando bucle de refinamiento interactivo...[/yellow]")
                 refined_idea, updated_turns = self._run_refinement_loop(cleaned_input, turn_count)
                 return self.translate(refined_idea, turn_count=updated_turns)
             else:
@@ -199,13 +199,13 @@ class IntentTranslator:
             console.print()
             console.print(Panel(
                 f"[bold cyan]{response}[/bold cyan]",
-                title="[bold yellow]🤖 Translator (Refinamiento)[/bold yellow]",
+                title="[bold yellow][IA] Translator (Refinamiento)[/bold yellow]",
                 border_style="cyan"
             ))
             console.print()
             
             try:
-                user_input = input("✍ Aclara tu instrucción (o escribe /skip o /ready para continuar) > ").strip()
+                user_input = input("[INPUT] Aclara tu instrucción (o escribe /skip o /ready para continuar) > ").strip()
             except (KeyboardInterrupt, EOFError):
                 break
                 

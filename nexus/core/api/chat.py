@@ -181,8 +181,9 @@ async def get_history():
         state.history.clear()
         return {"history": []}
 
+    deps.ensure_session_history_loaded(current_session["id"])
     sanitized_history = []
-    for msg in current_session.get("history", []):
+    for msg in current_session.get("history") or []:
         c = msg.get("content", "")
         if msg.get("role") == "user" and "INSTRUCCIÓN GENERAL:" in c:
             m = re.search(r"INSTRUCCIÓN GENERAL:\s*(.*?)(?=\n\nBORRADOR ACTUAL|\Z)", c, re.DOTALL)
@@ -239,17 +240,18 @@ async def switch_session(req: SwitchSessionRequest):
         raise HTTPException(status_code=404, detail="Sesión de chat no encontrada")
 
     deps._active_session_id = req.session_id
+    deps.ensure_session_history_loaded(req.session_id)
     target_session = deps._chat_sessions[deps._active_session_id]
 
     state.history.clear()
-    for msg in target_session.get("history", []):
+    for msg in target_session.get("history") or []:
         state.history.append(msg)
 
     return {
         "status": "ok",
         "active_session_id": deps._active_session_id,
         "title": target_session["title"],
-        "history": target_session.get("history", [])
+        "history": target_session.get("history") or []
     }
 
 
@@ -434,7 +436,7 @@ async def chat(req: ChatRequest):
                 "project_id": str(active_escriba_pid) if current_mode == "escriba" else None
             }
             deps._chat_sessions[new_id] = current_session
-        elif len(current_session.get("history", [])) == 0:
+        elif len(current_session.get("history") or []) == 0:
             clean_title = user_input[:30].strip()
             if len(user_input) > 30:
                 clean_title += "..."
@@ -444,6 +446,10 @@ async def chat(req: ChatRequest):
             current_session["is_jellyfish"] = (current_mode == "jellyfish")
             if current_mode == "escriba":
                 current_session["project_id"] = str(active_escriba_pid)
+
+    deps.ensure_session_history_loaded(current_session["id"])
+    if current_session.get("history") is None:
+        current_session["history"] = []
 
     # Cambio de agente con @
     if user_input.startswith("@"):
@@ -498,7 +504,7 @@ async def chat(req: ChatRequest):
             current_session["history"].clear()
             state.history.clear()
             save_session_to_db(current_session)
-            return ChatResponse(response="✓ Historial limpiado.", agent=state.active_agent, model=state.model, provider=state.provider)
+            return ChatResponse(response="[OK] Historial limpiado.", agent=state.active_agent, model=state.model, provider=state.provider)
 
     rag_context = ""
     if rag and rag.is_active:
@@ -630,8 +636,18 @@ async def chat(req: ChatRequest):
                             "Explica amablemente al usuario que para analizar entidades, relaciones, o el grafo semántico del proyecto, primero debe escribir o cargar un borrador en el Canva."
                         )
                     })
+
+                # Inyección activa de protocolos literarios y lentes analíticos del proyecto
+                from core.escriba_engine import load_escriba_protocols, format_protocol_system_prompt
+                proj_protocols = load_escriba_protocols(state.active_project)
+                proto_prompt = format_protocol_system_prompt(proj_protocols)
+                if proto_prompt:
+                    messages.append({
+                        "role": "system",
+                        "content": proto_prompt
+                    })
             except Exception as e_man:
-                logger.warning("Error al inyectar manuscrito de ESCRIBA: %s", e_man)
+                logger.warning("Error al inyectar manuscrito o protocolos de ESCRIBA: %s", e_man)
 
         for msg in current_session["history"]:
             messages.append(msg)
@@ -712,11 +728,9 @@ async def chat(req: ChatRequest):
                     if q_matches:
                         clean_title = q_matches[0]
 
-                    clean_title = re.sub(r'^:\s*', '', clean_title).strip()
-                    if not clean_title or len(clean_title) < 2:
-                        clean_title = "Borrador de Canva"
-                    else:
-                        clean_title = clean_title[:50].strip(" :,-.").title()
+                    from core.escriba_engine import load_escriba_chapters
+                    existing_chaps = load_escriba_chapters(state.active_project)
+                    clean_title = f"Fragmento {len(existing_chaps) + 1}"
 
                     new_chap = {
                         "id": f"chap_{int(time.time() * 1000)}",

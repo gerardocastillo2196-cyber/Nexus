@@ -61,13 +61,13 @@ class CLIEventSubscriber:
         elif et == EventType.TASK_COMPLETED:
             task_id = p.get("task_id", "")
             reason = p.get("reason", "Aprobado por DoD")
-            console.print(f"       ✓ DoD Aprobado ({task_id}): {reason}")
+            console.print(f"       [OK] DoD Aprobado ({task_id}): {reason}")
 
         elif et == EventType.TASK_BLOCKED:
             task_id = p.get("task_id", "")
             missing_dep = p.get("missing_dep", "")
             console.print(
-                f"       ⚠️ [TAREA BLOQUEADA] {task_id}: Bloqueada esperando a dependencia '{missing_dep}'. "
+                f"       [ADVERTENCIA] [TAREA BLOQUEADA] {task_id}: Bloqueada esperando a dependencia '{missing_dep}'. "
                 f"Notificando al Scrum Master."
             )
 
@@ -75,7 +75,7 @@ class CLIEventSubscriber:
             task_id = p.get("task_id", "")
             max_retries = p.get("max_retries", 3)
             error_log = p.get("error_log", "")
-            console.print(f"\n❌ [BLOQUEADO] La tarea {task_id} ha fallado {max_retries} veces consecutivas.")
+            console.print(f"\n[ERROR] [BLOQUEADO] La tarea {task_id} ha fallado {max_retries} veces consecutivas.")
             console.print(f"       Último error registrado: {error_log[:150]}...")
 
         elif et == EventType.SENTINEL_ALERT:
@@ -88,16 +88,16 @@ class CLIEventSubscriber:
             console.print("\n" + "=" * 80)
             console.print(Panel(
                 Markdown(
-                    f"### 🛡️ @Sentinel — Alerta de Interrupción del Pipeline (SIP)\n\n"
+                    f"### [SEGURIDAD] @Sentinel — Alerta de Interrupción del Pipeline (SIP)\n\n"
                     f"**Agente Asignado:** @{agent_name}\n"
                     f"**ID Tarea:** {task_id}\n"
                     f"**Descripción:** {task_desc}\n"
                     f"**Entregable:** `{output_file}`\n\n"
                     f"---"
-                    f"#### 🔍 LOG CORTO DEL ERROR (Los 3 intentos fallaron):\n"
+                    f"#### [BUSQUEDA] LOG CORTO DEL ERROR (Los 3 intentos fallaron):\n"
                     f"```\n{error_log[:1500] if len(error_log) > 1500 else error_log}\n```"
                 ),
-                title="[bold red]🚨 SENTINEL INTERACTIVE PAUSE 🚨[/bold red]",
+                title="[bold red][ALERTA CRITICA] SENTINEL INTERACTIVE PAUSE [ALERTA CRITICA][/bold red]",
                 border_style="red"
             ))
 
@@ -106,9 +106,9 @@ class CLIEventSubscriber:
             req_msg = p.get("message", "")
             console.print(Panel(
                 Markdown(
-                    f"### 🛑 [IMPEDIMENTO CRÍTICO DE ENTORNO]\n\n"
+                    f"### [ALERTA] [IMPEDIMENTO CRÍTICO DE ENTORNO]\n\n"
                     f"El proyecto requiere las siguientes herramientas en el sistema host que **NO** están disponibles:\n\n"
-                    + "\n".join(f"- ❌ `{tool}`" for tool in missing) + "\n\n"
+                    + "\n".join(f"- [ERROR] `{tool}`" for tool in missing) + "\n\n"
                     f"**Detalle:** {req_msg}\n\n"
                     f"Por favor, instala los binarios faltantes en el sistema y vuelve a ejecutar."
                 ),
@@ -124,7 +124,7 @@ class CLIEventSubscriber:
 
         elif et == EventType.ERROR_CRITICAL:
             msg = p.get("message", "Error no especificado")
-            console.print(f"[red]❌ Error Crítico: {msg}[/red]")
+            console.print(f"[red][ERROR] Error Crítico: {msg}[/red]")
 
 
 # Instancia global del suscriptor CLI

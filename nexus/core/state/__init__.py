@@ -7,6 +7,7 @@ from core.state.persistence import (
 from core.state.core import (
     JellyfishState, get_term_width, get_term_height,
     _CHARS_PER_TOKEN, _MODEL_TOKEN_LIMIT, _HISTORY_CHAR_BUDGET, _SLIDING_WINDOW_MAX_MESSAGES,
+    _llm_busy,
 )
 from core.project_manager import cleanup_lock
 _cleanup_lock = cleanup_lock
@@ -24,7 +25,7 @@ __all__ = [
     "JellyfishState", "Blackboard", "PersistedSet", "PersistedHistoryList",
     "connect_db", "_connect_db", "save_state_var", "get_state_var",
     "get_term_width", "get_term_height", "_CHARS_PER_TOKEN", "_MODEL_TOKEN_LIMIT",
-    "_HISTORY_CHAR_BUDGET", "_SLIDING_WINDOW_MAX_MESSAGES", "_cleanup_lock",
+    "_HISTORY_CHAR_BUDGET", "_SLIDING_WINDOW_MAX_MESSAGES", "_cleanup_lock", "_llm_busy",
     "AGENCY_DIR", "MODEL", "OLLAMA_URL",
     "DB_PATH", "PLUGINS_DIR", "PROVIDER", "OPENAI_API_KEY", "DEEPSEEK_API_KEY",
     "OPENROUTER_API_KEY", "GEMINI_API_KEY", "DASHSCOPE_API_KEY", "KIMI_API_KEY",

@@ -101,7 +101,7 @@ def _ensure_sessions_loaded():
                     "id": sid,
                     "title": title,
                     "created_at": created_at,
-                    "history": history,
+                    "history": None,
                     "is_escriba": is_escriba_val,
                     "engine": engine_val,
                     "project_id": project_id_raw
@@ -111,6 +111,29 @@ def _ensure_sessions_loaded():
         except Exception as e:
             logger.warning("No se pudieron cargar sesiones web de SQLite: %s", e)
         _sessions_loaded = True
+
+
+def ensure_session_history_loaded(session_id: str):
+    """Carga perezosa (lazy loading) del historial completo de una sesión desde SQLite."""
+    global _chat_sessions
+    if not session_id or session_id not in _chat_sessions:
+        return
+    session = _chat_sessions[session_id]
+    if session.get("history") is not None:
+        return
+    try:
+        conn = _connect_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT history_json FROM web_chat_sessions WHERE id = ?", (session_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row and row[0]:
+            session["history"] = json.loads(row[0])
+        else:
+            session["history"] = []
+    except Exception as e:
+        logger.warning("Error al cargar historial diferido de sesión %s: %s", session_id, e)
+        session["history"] = []
 
 
 def save_session_to_db(session: dict):

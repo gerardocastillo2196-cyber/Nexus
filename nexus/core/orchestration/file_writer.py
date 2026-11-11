@@ -25,14 +25,14 @@ def apply_patches_from_content(project_path: str, content: str) -> list[str]:
         full_path = os.path.join(project_path, clean_rel_path)
         
         if not os.path.exists(full_path):
-            console.print(f"       ✗ Error al aplicar parche: El archivo {clean_rel_path} no existe.")
+            console.print(f"       [X] Error al aplicar parche: El archivo {clean_rel_path} no existe.")
             continue
             
         try:
             with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                 file_text = f.read()
         except Exception as e:
-            console.print(f"       ✗ Error leyendo {clean_rel_path}: {e}")
+            console.print(f"       [X] Error leyendo {clean_rel_path}: {e}")
             continue
             
         blocks = re.findall(r'<<<<<<< SEARCH\n?(.*?)\n?=======\n?(.*?)\n?>>>>>>> REPLACE', patch_block, re.DOTALL)
@@ -40,7 +40,7 @@ def apply_patches_from_content(project_path: str, content: str) -> list[str]:
             blocks = re.findall(r'<<<<<<< SEARCH(.*?)=======(.*?)>>>>>>> REPLACE', patch_block, re.DOTALL)
             
         if not blocks:
-            console.print(f"       ✗ No se encontraron bloques SEARCH/REPLACE válidos para {clean_rel_path}.")
+            console.print(f"       [X] No se encontraron bloques SEARCH/REPLACE válidos para {clean_rel_path}.")
             continue
             
         modified = False
@@ -54,16 +54,16 @@ def apply_patches_from_content(project_path: str, content: str) -> list[str]:
                 temp_text = temp_text.replace(search_text, replace_text)
                 modified = True
             else:
-                console.print(f"       ⚠ Coincidencia SEARCH no encontrada en {clean_rel_path}.")
+                console.print(f"       [ADVERTENCIA] Coincidencia SEARCH no encontrada en {clean_rel_path}.")
                 
         if modified:
             try:
                 with open(full_path, "w", encoding="utf-8") as f:
                     f.write(temp_text)
                 patched_files.append(clean_rel_path)
-                console.print(f"       [bold green]✓[/bold green] [green]Parche aplicado exitosamente en {clean_rel_path}[/green]")
+                console.print(f"       [bold green][OK][/bold green] [green]Parche aplicado exitosamente en {clean_rel_path}[/green]")
             except Exception as e:
-                console.print(f"       ✗ Error escribiendo {clean_rel_path}: {e}")
+                console.print(f"       [X] Error escribiendo {clean_rel_path}: {e}")
                 
     return patched_files
 
@@ -81,7 +81,7 @@ def extract_and_write_files(project_path: str, content: str) -> list[str]:
                 f.write(file_content)
             created_files.append(clean_rel_path)
         except Exception as e:
-            console.print(f"       ✗ Error creando archivo {clean_rel_path}: {e}")
+            console.print(f"       [X] Error creando archivo {clean_rel_path}: {e}")
             logger.error("Error al escribir archivo real de agente: %s", e)
 
     md_matches = re.findall(r'\[WRITE_FILE:\s*([^\]\s]+)\]\s*\n*```[a-zA-Z0-9_-]*\n(.*?)\n```', content, re.DOTALL)
@@ -96,7 +96,7 @@ def extract_and_write_files(project_path: str, content: str) -> list[str]:
                 f.write(file_content)
             created_files.append(rel_clean)
         except Exception as e:
-            console.print(f"       ✗ Error creando archivo {rel_clean}: {e}")
+            console.print(f"       [X] Error creando archivo {rel_clean}: {e}")
             logger.error("Error al escribir archivo real de agente: %s", e)
             
     # Integrar aplicación de parches parciales

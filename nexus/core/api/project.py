@@ -69,8 +69,22 @@ async def switch_project(req: SwitchProjectRequest):
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail=f"El directorio '{path}' no existe.")
 
-    state.active_project = os.path.abspath(path)
+    abs_path = os.path.abspath(path)
+    if not os.path.isdir(abs_path):
+        raise HTTPException(status_code=400, detail="La ruta especificada debe ser un directorio válido.")
+
+    # Hardening Blue Team: Prohibir vinculación de directorios críticos del sistema
+    forbidden_roots = {"/", "/etc", "/sys", "/proc", "/dev", "/boot", "/root", "/bin", "/sbin", "/usr", "/var"}
+    if abs_path in forbidden_roots or any(abs_path.startswith(f + "/") for f in ["/etc", "/sys", "/proc", "/dev", "/boot", "/root"]):
+        logger.warning("[SEGURIDAD] INTENTO DE PATH TRAVERSAL BLOQUEADO: Intento de vincular directorio de sistema '%s'", abs_path)
+        raise HTTPException(
+            status_code=400,
+            detail="Acceso denegado: Por seguridad, no se permite vincular directorios críticos del sistema como proyecto."
+        )
+
+    state.active_project = abs_path
     state.refresh_static_context()
+    logger.info("Proyecto activo cambiado a: %s", abs_path)
 
     return {
         "status": "ok",
@@ -93,4 +107,5 @@ async def set_auto_approve(req: AutoApproveRequest):
     """Configura el modo de auto-aprobación para la generación de código."""
     state = get_state()
     state.auto_approve = req.auto_approve
+    logger.warning("[CONFIG] MODO AUTO-APROBACIÓN MODIFICADO: auto_approve=%s", req.auto_approve)
     return {"status": "ok", "auto_approve": state.auto_approve}

@@ -177,7 +177,7 @@ def run_subprocess(cmd: list[str] | str, **kwargs) -> subprocess.CompletedProces
             args=cmd,
             returncode=-1,
             stdout="",
-            stderr=f"🛑 INCIDENTE DE SEGURIDAD: Comando bloqueado por políticas de Sandbox en el subproceso del DoD. Patrón detectado: {matched_pattern}"
+            stderr=f"[ALERTA] INCIDENTE DE SEGURIDAD: Comando bloqueado por políticas de Sandbox en el subproceso del DoD. Patrón detectado: {matched_pattern}"
         )
         
     return subprocess.run(cmd, **kwargs)
@@ -187,7 +187,7 @@ def run_terminal_command(command_str: str, state, **kwargs) -> str:
     is_safe, matched_pattern = is_command_safe(command_str)
     if not is_safe:
         msg = (
-            f"🛑 INCIDENTE DE SEGURIDAD: Comando destructivo detectado y bloqueado automáticamente por el sandbox.\n"
+            f"[ALERTA] INCIDENTE DE SEGURIDAD: Comando destructivo detectado y bloqueado automáticamente por el sandbox.\n"
             f"   Patrón de lista negra: {matched_pattern}\n"
             f"   Comando: {command_str[:150]}"
         )

@@ -24,8 +24,16 @@ class EscribaNodeRequest(BaseModel):
 class EscribaLinkRequest(BaseModel):
     source: str
     target: str
-    relation: Optional[str] = "relacionado"
+    label: Optional[str] = None
+    relation: Optional[str] = None
+    description: Optional[str] = ""
+    direction: Optional[str] = "bidirectional"
+    intensity: Optional[str] = "Media"
     weight: Optional[int] = 1
+
+
+class EscribaProtocolsRequest(BaseModel):
+    protocols: list
 
 
 class EscribaProjectSwitchRequest(BaseModel):
@@ -91,12 +99,27 @@ class EscribaProcessRequest(BaseModel):
     factions: Optional[list] = None
     isolated_chars: Optional[list] = None
     context_lines: Optional[list] = None
+    graph_context: Optional[str] = None
 
 
 class EscribaNexusRequest(BaseModel):
     lens_ids: Optional[list] = None
     active_lenses: Optional[list] = None
     project_id: Optional[str] = None
+
+
+class EscribaTimelineRequest(BaseModel):
+    contexts: Optional[list] = None
+    periods: Optional[list] = None
+    milestones: Optional[list] = None
+
+
+class EscribaContextGenerateRequest(BaseModel):
+    dimension: str = "politico"
+    idea: Optional[str] = ""
+    project_id: Optional[str] = None
+    research_mode: Optional[str] = "fictional"
+    is_historical: Optional[bool] = False
 
 
 @router.get("/state")
@@ -212,7 +235,7 @@ async def process_escriba_task(req: EscribaProcessRequest):
 @router.get("/nexus")
 @router.post("/nexus")
 async def analyze_nexus_endpoint(req: Optional[EscribaNexusRequest] = None):
-    """Intersección topológica instantánea de vecindarios de nodos (Nexo Analítico 0 Tokens)."""
+    """Calcula las entidades que actúan como Nodos Puente / Conectores clave en la trama."""
     state = get_state()
     try:
         from core.escriba_engine import load_escriba_graph, analyze_nexus_intersections
@@ -220,39 +243,199 @@ async def analyze_nexus_endpoint(req: Optional[EscribaNexusRequest] = None):
         active_lenses = []
         if req:
             active_lenses = req.lens_ids or req.active_lenses or []
-        if not active_lenses:
-            active_lenses = [n["id"] for n in graph_data.get("nodes", [])[:3]]
-        
-        intersections = analyze_nexus_intersections(graph_data, active_lenses)
+
+        bridges = analyze_nexus_intersections(graph_data, active_lenses)
         return {
             "status": "ok",
-            "count": len(intersections),
-            "nexus_entities": intersections,
-            "intersections": intersections,
+            "count": len(bridges),
+            "nexus_entities": bridges,
             "analysis": (
-                f"Nexo detectado: **{len(intersections)} entidad(es)** conectada(s) a los lentes seleccionados.\n\n"
-                + "\n".join(f"- **{e['label']}** ({e['type']})" for e in intersections)
-                if intersections
-                else "No se encontraron entidades compartidas en este cruce analítico."
+                f"Se detectaron **{len(bridges)} entidades conectoras** en el universo.\n\n"
+                + "\n".join(f"- **{e['label']}** ({e['type']}): {e.get('bridge_summary', '')}" for e in bridges)
+                if bridges
+                else "No se detectaron nodos conectores aún. Registra al menos 2 relaciones entre entidades en el grafo."
             )
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/timeline")
+async def get_escriba_timeline():
+    """Retorna los contextos multidimensionales, períodos temporales e hitos de la historia."""
+    state = get_state()
+    try:
+        from core.escriba_engine import load_escriba_timeline
+        data = load_escriba_timeline(state.active_project)
+        return {"status": "ok", **data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/timeline")
+async def save_escriba_timeline_endpoint(req: EscribaTimelineRequest):
+    """Guarda o actualiza los contextos multidimensionales, períodos temporales e hitos."""
+    state = get_state()
+    try:
+        from core.escriba_engine import save_escriba_timeline
+        timeline_data = req.model_dump()
+        result = save_escriba_timeline(state.active_project, timeline_data)
+        return {"status": "ok", **result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/contexts/generate")
+async def generate_escriba_context_endpoint(req: EscribaContextGenerateRequest):
+    """Genera con asistencia de IA un contexto multidimensional adaptado al proyecto."""
+    state = get_state()
+    try:
+        from core.escriba_engine import generate_narrative_context
+        pid = req.project_id or getattr(state, "active_project", None)
+        mode = req.research_mode or ("historical" if req.is_historical else "fictional")
+        result = generate_narrative_context(pid, req.dimension, req.idea or "", state, research_mode=mode)
+        return result
+    except Exception as e:
+        logger.error(f"Error generando contexto con IA: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/protocols")
+async def get_escriba_protocols():
+    """Retorna los protocolos literarios y lentes analíticos del proyecto activo."""
+    state = get_state()
+    try:
+        from core.escriba_engine import load_escriba_protocols
+        protocols = load_escriba_protocols(state.active_project)
+        return {"status": "ok", "protocols": protocols}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/protocols")
+async def save_escriba_protocols_endpoint(req: EscribaProtocolsRequest):
+    """Guarda los protocolos literarios y lentes analíticos del proyecto activo."""
+    state = get_state()
+    try:
+        from core.escriba_engine import save_escriba_protocols
+        saved = save_escriba_protocols(state.active_project, req.protocols)
+        return {"status": "ok", "protocols": saved}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/protocols/reset")
+async def reset_escriba_protocols_endpoint():
+    """Restaura los protocolos literarios y lentes analíticos predeterminados."""
+    state = get_state()
+    try:
+        from core.escriba_engine import save_escriba_protocols, DEFAULT_PROTOCOL_PACKS
+        saved = save_escriba_protocols(state.active_project, [dict(p) for p in DEFAULT_PROTOCOL_PACKS])
+        return {"status": "ok", "protocols": saved}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/export")
+async def export_escriba_manuscript(format: str = "md"):
+    """Exporta el manuscrito completo del proyecto activo en formato Markdown o texto plano."""
+    from fastapi.responses import PlainTextResponse
+    state = get_state()
+    try:
+        from core.escriba_engine import load_escriba_chapters, load_escriba_projects, get_active_project_id
+        pid = state.active_project or get_active_project_id()
+        projects = load_escriba_projects()
+        current_p = next((p for p in projects if str(p.get("id")) == str(pid)), None)
+        proj_title = (current_p.get("name") or current_p.get("title") or "Manuscrito ESCRIBA") if current_p else "Manuscrito ESCRIBA"
+        genre = current_p.get("genre", "") if current_p else ""
+        tone = current_p.get("tone", "") if current_p else ""
+
+        chapters = load_escriba_chapters(pid)
+        total_words = sum(c.get("wordCount", len(c.get("content", "").split())) for c in chapters)
+
+        lines = [
+            f"# {proj_title}",
+            f"> Género: {genre} | Tono: {tone} | Palabras Totales: {total_words:,}",
+            "",
+            "---",
+            ""
+        ]
+
+        if not chapters:
+            lines.append("*(Este proyecto aún no contiene capítulos ni fragmentos redactados en el Canva)*")
+        else:
+            for idx, c in enumerate(chapters, 1):
+                c_title = c.get("title") or f"Fragmento {idx}"
+                c_content = c.get("content", "").strip()
+                lines.append(f"## {c_title}")
+                lines.append("")
+                lines.append(c_content if c_content else "*(Borrador sin contenido)*")
+                lines.append("")
+                lines.append("---")
+                lines.append("")
+
+        full_text = "\n".join(lines)
+        ext = "md" if format.lower() == "md" else "txt"
+        clean_filename = "".join(c for c in proj_title if c.isalnum() or c in (' ', '_', '-')).strip().replace(' ', '_')
+        return PlainTextResponse(
+            content=full_text,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=\"{clean_filename}.{ext}\""}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 from fastapi import UploadFile, File
+
+@router.get("/entities")
+async def get_escriba_entities():
+    """Retorna las entidades del grafo de ESCRIBA agrupadas por categoría (personajes, lugares, facciones, eventos)."""
+    state = get_state()
+    try:
+        from core.escriba_engine import load_escriba_graph
+        graph = load_escriba_graph(state.active_project)
+        nodes = graph.get("nodes", [])
+        links = graph.get("links", [])
+        characters = [n for n in nodes if n.get("type") in ["character", "personaje"]]
+        locations = [n for n in nodes if n.get("type") in ["location", "lugar"]]
+        factions = [n for n in nodes if n.get("type") in ["faction", "facción", "faccion"]]
+        events = [n for n in nodes if n.get("type") in ["event", "evento"]]
+        return {
+            "status": "ok",
+            "graph": graph,
+            "nodes": nodes,
+            "links": links,
+            "characters": characters,
+            "locations": locations,
+            "factions": factions,
+            "events": events,
+            "counts": {
+                "total": len(nodes),
+                "characters": len(characters),
+                "locations": len(locations),
+                "factions": len(factions),
+                "events": len(events),
+                "links": len(links)
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/import")
 async def import_manuscript_file(file: UploadFile = File(...)):
-    """Importa un archivo de manuscrito (.txt, .md, .json) como nuevo capítulo en Canva."""
+    """Importa un archivo de manuscrito (.txt, .md, .json) como nuevo fragmento en Canva."""
     state = get_state()
     try:
         content_bytes = await file.read()
         content_str = content_bytes.decode("utf-8", errors="ignore")
-        filename = file.filename or "Manuscrito_Importado.txt"
-        title = os.path.splitext(filename)[0].replace("_", " ")
 
         from core.escriba_engine import save_escriba_chapter, load_escriba_chapters
+        existing_chaps = load_escriba_chapters(state.active_project)
+        frag_num = len(existing_chaps) + 1
+        title = f"Fragmento {frag_num}"
+
         chap_data = {
             "title": title,
             "content": content_str,
@@ -379,6 +562,9 @@ async def create_escriba_project(req: EscribaProjectCreateRequest):
     projects.append(new_proj)
     save_escriba_projects(projects)
 
+    from core.escriba_engine import ensure_project_files_initialized
+    ensure_project_files_initialized(new_id)
+
     state.active_project = new_id
     return {"status": "ok", "project": new_proj, "projects": projects}
 
@@ -464,4 +650,60 @@ async def delete_escriba_project_endpoint(project_id: str):
         "projects": remaining,
         "active_session_id": deps._active_session_id
     }
+
+
+# ── Laboratorio de Protagonistas, Antagonistas y Tropos ──────────────────────
+
+@router.post("/laboratory/suggest-enrichment")
+async def laboratory_suggest_enrichment_endpoint(request: Request):
+    """Genera 3 propuestas literarias para enriquecer, subvertir o deconstruir un tropo o arquetipo."""
+    state = get_state()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    trope_name = data.get("trope_name") or data.get("trope") or "Arquetipo Clásico"
+    character_name = data.get("character_name") or data.get("name") or "Personaje"
+    role = data.get("role") or "Protagonista"
+    project_id = data.get("project_id") or state.active_project
+
+    from core.escriba_engine import suggest_trope_enrichment
+    res = suggest_trope_enrichment(trope_name, character_name, role, project_id, state)
+    return res
+
+
+@router.post("/laboratory/audit-tension")
+async def laboratory_audit_tension_endpoint(request: Request):
+    """Evalúa la polaridad dramática, consistencia de tropos y riesgos de cliché entre una díada."""
+    state = get_state()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    protagonist = data.get("protagonist") or {}
+    antagonist = data.get("antagonist") or {}
+    dilemma = data.get("dilemma") or ""
+    project_id = data.get("project_id") or state.active_project
+
+    from core.escriba_engine import audit_character_tension
+    res = audit_character_tension(protagonist, antagonist, dilemma, project_id, state)
+    return res
+
+
+@router.post("/laboratory/save-pair")
+async def laboratory_save_pair_endpoint(request: Request):
+    """Guarda o actualiza una díada o personaje individual con su perfil enriquecido de tropos en el grafo."""
+    state = get_state()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    project_id = data.get("project_id") or state.active_project
+    from core.escriba_engine import save_character_laboratory_pair
+    res = save_character_laboratory_pair(data, project_id)
+    return res
+
 

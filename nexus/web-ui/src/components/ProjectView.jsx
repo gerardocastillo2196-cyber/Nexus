@@ -42,7 +42,7 @@ export default function ProjectView({ onStateRefresh, onNavigate }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: `✓ ${data.message}` });
+        setMessage({ type: 'success', text: `[OK] ${data.message}` });
         setSwitchPath('');
         await fetchProjectInfo();
         onStateRefresh?.();
@@ -69,7 +69,7 @@ export default function ProjectView({ onStateRefresh, onNavigate }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: `✓ ${data.message}` });
+        setMessage({ type: 'success', text: `[OK] ${data.message}` });
         setNewProjectName('');
         setNewParentDir('');
         await fetchProjectInfo();
@@ -137,7 +137,7 @@ export default function ProjectView({ onStateRefresh, onNavigate }) {
           </div>
         </div>
         <button className="btn btn-secondary" onClick={() => onNavigate('chat')}>
-          ➔ Volver al Chat
+          Volver al Chat
         </button>
       </div>
 

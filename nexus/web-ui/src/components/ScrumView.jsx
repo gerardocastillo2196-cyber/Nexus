@@ -53,7 +53,7 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
           sprint_board: data.sprint_board,
           daily: data.daily
         });
-        setCreateMessage('✓ Proyecto Jellyfish creado exitosamente. Backlog e Historias generadas.');
+        setCreateMessage('[OK] Proyecto Jellyfish creado exitosamente. Backlog e Historias generadas.');
         setTimeout(() => {
           setCreateMessage('');
           setActiveTab('sprint_board');
@@ -69,36 +69,49 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
   };
 
   return (
-    <div className="full-view-container" style={{ padding: '24px', color: '#e3e3e3', height: '100%', overflowY: 'auto' }}>
-      <div className="view-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '16px' }}>
+    <div className="full-view-container" style={{ padding: '28px', color: '#f8fafc', height: '100%', overflowY: 'auto', background: 'transparent' }}>
+      <div className="view-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', borderBottom: '1px solid rgba(56, 189, 248, 0.2)', paddingBottom: '18px', flexWrap: 'wrap', gap: '16px' }}>
         <div className="view-title-group">
           <div>
-            <h1 className="view-title" style={{ margin: 0, fontSize: '22px', fontWeight: 700, color: '#60a5fa' }}>
-              Agencia Jellyfish & Gestión de Proyectos Ágiles
-            </h1>
-            <p className="view-subtitle" style={{ margin: '4px 0 0 0', color: '#94a3b8', fontSize: '13px' }}>
-              Inicializa proyectos de software, gestiona el Product Backlog y monitorea Sprints con los agentes PO y Scrum Master.
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h1 className="view-title" style={{
+                margin: 0, fontSize: '24px', fontWeight: 800,
+                fontFamily: 'var(--font-display, Outfit, sans-serif)',
+                background: 'linear-gradient(135deg, #ffffff 40%, #38bdf8 100%)',
+                WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
+              }}>
+                Agencia Jellyfish — Gestión de Proyectos Ágiles & Swarm
+              </h1>
+            </div>
+            <p className="view-subtitle" style={{ margin: '6px 0 0 0', color: '#94a3b8', fontSize: '14px' }}>
+              Product Backlog, Sprints coordinados y orquestación multi-agente con @product_owner y @scrum_master.
             </p>
           </div>
         </div>
         <button
           className="btn btn-secondary"
           onClick={() => onNavigate('chat')}
-          style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '8px', color: '#fff', cursor: 'pointer' }}
+          style={{
+            padding: '8px 18px', background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.15)', borderRadius: '10px',
+            color: '#f8fafc', cursor: 'pointer', fontWeight: 600, fontSize: '13px'
+          }}
         >
-          ➔ Volver al Chat
+          Volver al Chat
         </button>
       </div>
 
-      <div className="view-tabs-bar" style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px' }}>
+      <div className="view-tabs-bar" style={{ display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap' }}>
         <button
           className={`view-tab-btn ${activeTab === 'create_project' ? 'active' : ''}`}
           onClick={() => setActiveTab('create_project')}
           style={{
-            padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '13px',
-            background: activeTab === 'create_project' ? '#2563eb' : 'rgba(255,255,255,0.05)',
-            border: activeTab === 'create_project' ? 'none' : '1px solid rgba(255,255,255,0.15)',
-            color: '#fff'
+            padding: '10px 20px', borderRadius: '12px', cursor: 'pointer', fontWeight: 700, fontSize: '13px',
+            background: activeTab === 'create_project' ? 'linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%)' : 'rgba(255,255,255,0.03)',
+            border: activeTab === 'create_project' ? 'none' : '1px solid rgba(255,255,255,0.08)',
+            color: '#fff',
+            boxShadow: activeTab === 'create_project' ? '0 4px 16px rgba(59, 130, 246, 0.4)' : 'none',
+            transition: 'all 0.2s ease'
           }}
         >
           + Crear Proyecto Jellyfish
@@ -107,10 +120,12 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
           className={`view-tab-btn ${activeTab === 'sprint_board' ? 'active' : ''}`}
           onClick={() => setActiveTab('sprint_board')}
           style={{
-            padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
-            background: activeTab === 'sprint_board' ? '#2563eb' : 'rgba(255,255,255,0.05)',
-            border: activeTab === 'sprint_board' ? 'none' : '1px solid rgba(255,255,255,0.15)',
-            color: '#fff'
+            padding: '10px 20px', borderRadius: '12px', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
+            background: activeTab === 'sprint_board' ? 'linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%)' : 'rgba(255,255,255,0.03)',
+            border: activeTab === 'sprint_board' ? 'none' : '1px solid rgba(255,255,255,0.08)',
+            color: '#fff',
+            boxShadow: activeTab === 'sprint_board' ? '0 4px 16px rgba(59, 130, 246, 0.4)' : 'none',
+            transition: 'all 0.2s ease'
           }}
         >
           Sprint Board
@@ -119,10 +134,12 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
           className={`view-tab-btn ${activeTab === 'backlog' ? 'active' : ''}`}
           onClick={() => setActiveTab('backlog')}
           style={{
-            padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
-            background: activeTab === 'backlog' ? '#2563eb' : 'rgba(255,255,255,0.05)',
-            border: activeTab === 'backlog' ? 'none' : '1px solid rgba(255,255,255,0.15)',
-            color: '#fff'
+            padding: '10px 20px', borderRadius: '12px', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
+            background: activeTab === 'backlog' ? 'linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%)' : 'rgba(255,255,255,0.03)',
+            border: activeTab === 'backlog' ? 'none' : '1px solid rgba(255,255,255,0.08)',
+            color: '#fff',
+            boxShadow: activeTab === 'backlog' ? '0 4px 16px rgba(59, 130, 246, 0.4)' : 'none',
+            transition: 'all 0.2s ease'
           }}
         >
           Product Backlog
@@ -131,10 +148,12 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
           className={`view-tab-btn ${activeTab === 'daily' ? 'active' : ''}`}
           onClick={() => setActiveTab('daily')}
           style={{
-            padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
-            background: activeTab === 'daily' ? '#2563eb' : 'rgba(255,255,255,0.05)',
-            border: activeTab === 'daily' ? 'none' : '1px solid rgba(255,255,255,0.15)',
-            color: '#fff'
+            padding: '10px 20px', borderRadius: '12px', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
+            background: activeTab === 'daily' ? 'linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%)' : 'rgba(255,255,255,0.03)',
+            border: activeTab === 'daily' ? 'none' : '1px solid rgba(255,255,255,0.08)',
+            color: '#fff',
+            boxShadow: activeTab === 'daily' ? '0 4px 16px rgba(59, 130, 246, 0.4)' : 'none',
+            transition: 'all 0.2s ease'
           }}
         >
           Daily Log
@@ -143,15 +162,22 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
 
       <div className="view-content">
         {activeTab === 'create_project' && (
-          <div style={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '24px', maxWidth: '750px' }}>
-            <h2 style={{ margin: '0 0 8px 0', fontSize: '18px', color: '#fff' }}>Inicializar Nuevo Proyecto Jellyfish</h2>
-            <p style={{ margin: '0 0 20px 0', fontSize: '13px', color: '#94a3b8' }}>
-              La Agencia Jellyfish coordinará a los agentes <strong>@product_owner</strong> y <strong>@scrum_master</strong> para desglosar la visión en Historias de Usuario e inicializar los tableros.
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(14, 26, 46, 0.8) 0%, rgba(10, 15, 30, 0.8) 100%)',
+            border: '1px solid rgba(56, 189, 248, 0.3)',
+            borderRadius: '16px', padding: '28px', maxWidth: '800px',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)'
+          }}>
+            <h2 style={{ margin: '0 0 8px 0', fontSize: '20px', fontWeight: 700, color: '#f8fafc' }}>
+              Inicializar Nuevo Proyecto Jellyfish
+            </h2>
+            <p style={{ margin: '0 0 24px 0', fontSize: '13px', color: '#94a3b8' }}>
+              La Agencia Jellyfish coordinará a los agentes <strong style={{ color: '#38bdf8' }}>@product_owner</strong> y <strong style={{ color: '#38bdf8' }}>@scrum_master</strong> para desglosar la visión en Historias de Usuario e inicializar los tableros.
             </p>
 
-            <form onSubmit={handleCreateScrumProject} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <form onSubmit={handleCreateScrumProject} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 600 }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '8px', fontWeight: 600 }}>
                   Nombre del Proyecto Jellyfish:
                 </label>
                 <input
@@ -160,12 +186,20 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
                   placeholder="ej. Sistema de Facturación Electrónica"
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
-                  style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px', color: '#fff', fontSize: '14px' }}
+                  style={{
+                    width: '100%', padding: '12px 16px',
+                    background: 'rgba(0,0,0,0.4)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '10px', color: '#fff', fontSize: '14px',
+                    outline: 'none', transition: 'border-color 0.2s'
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = '#38bdf8'}
+                  onBlur={(e) => e.target.style.borderColor = 'rgba(255,255,255,0.15)'}
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 600 }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '8px', fontWeight: 600 }}>
                   Visión del Producto / Objetivo Principal:
                 </label>
                 <textarea
@@ -173,12 +207,20 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
                   placeholder="Describe qué resuelve el producto, quiénes son los usuarios finales y el valor entregado..."
                   value={projectVision}
                   onChange={(e) => setProjectVision(e.target.value)}
-                  style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px', color: '#fff', fontSize: '13px', resize: 'vertical' }}
+                  style={{
+                    width: '100%', padding: '12px 16px',
+                    background: 'rgba(0,0,0,0.4)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '10px', color: '#fff', fontSize: '13px',
+                    resize: 'vertical', outline: 'none'
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = '#38bdf8'}
+                  onBlur={(e) => e.target.style.borderColor = 'rgba(255,255,255,0.15)'}
                 />
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '6px', fontWeight: 600 }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#cbd5e1', marginBottom: '8px', fontWeight: 600 }}>
                   Descripción Técnica Corta:
                 </label>
                 <input
@@ -186,20 +228,34 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
                   placeholder="ej. Aplicación web moderna en React y backend Python FastAPI"
                   value={projectDesc}
                   onChange={(e) => setProjectDesc(e.target.value)}
-                  style={{ width: '100%', padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px', color: '#fff', fontSize: '13px' }}
+                  style={{
+                    width: '100%', padding: '12px 16px',
+                    background: 'rgba(0,0,0,0.4)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    borderRadius: '10px', color: '#fff', fontSize: '13px',
+                    outline: 'none'
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = '#38bdf8'}
+                  onBlur={(e) => e.target.style.borderColor = 'rgba(255,255,255,0.15)'}
                 />
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '12px' }}>
                 <button
                   type="submit"
                   disabled={creating}
-                  style={{ padding: '12px 24px', background: '#2563eb', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 700, cursor: creating ? 'not-allowed' : 'pointer', fontSize: '14px' }}
+                  style={{
+                    padding: '12px 28px',
+                    background: 'linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%)',
+                    border: 'none', borderRadius: '10px', color: '#fff',
+                    fontWeight: 700, cursor: creating ? 'not-allowed' : 'pointer', fontSize: '14px',
+                    boxShadow: '0 4px 18px rgba(59, 130, 246, 0.4)'
+                  }}
                 >
                   {creating ? 'Creando Proyecto...' : 'Inicializar Proyecto Jellyfish'}
                 </button>
                 {createMessage && (
-                  <span style={{ fontSize: '13px', color: '#93c5fd', fontWeight: 600 }}>{createMessage}</span>
+                  <span style={{ fontSize: '13px', color: '#38bdf8', fontWeight: 600 }}>{createMessage}</span>
                 )}
               </div>
             </form>
@@ -208,10 +264,38 @@ export default function ScrumView({ onNavigate, initialTab = 'sprint_board' }) {
 
         {activeTab !== 'create_project' && (
           loading ? (
-            <div className="panel-loading" style={{ padding: '40px', textAlign: 'center', color: '#94a3b8' }}>Cargando tablero SCRUM...</div>
+            <div className="panel-loading" style={{ padding: '60px', textAlign: 'center', color: '#94a3b8' }}>
+              Cargando tablero SCRUM de Jellyfish...
+            </div>
           ) : (
-            <div className="view-card full-width-card" style={{ background: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '20px' }}>
-              <pre className="scrum-pre" style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '13px', lineHeight: 1.5, color: '#f1f5f9' }}>
+            <div className="view-card full-width-card" style={{
+              background: 'rgba(10, 16, 32, 0.75)',
+              border: '1px solid rgba(56, 189, 248, 0.2)',
+              borderRadius: '16px', padding: '24px',
+              backdropFilter: 'blur(12px)',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.35)'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 700, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {activeTab.replace('_', ' ')}.md
+                </span>
+                <span style={{ fontSize: '12px', color: '#64748b' }}>
+                  Markdown renderizado
+                </span>
+              </div>
+              <pre className="scrum-pre" style={{
+                whiteSpace: 'pre-wrap',
+                fontFamily: 'var(--font-mono, monospace)',
+                fontSize: '13px',
+                lineHeight: 1.6,
+                color: '#e2e8f0',
+                background: 'rgba(0, 0, 0, 0.25)',
+                padding: '18px',
+                borderRadius: '10px',
+                border: '1px solid rgba(255, 255, 255, 0.05)',
+                maxHeight: '65vh',
+                overflowY: 'auto'
+              }}>
                 {scrumData[activeTab] || `No se encontró información para ${activeTab}.md en el proyecto actual.`}
               </pre>
             </div>

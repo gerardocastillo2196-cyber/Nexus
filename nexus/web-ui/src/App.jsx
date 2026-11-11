@@ -13,7 +13,6 @@ import EscribaGraphView from './components/EscribaGraphView';
 import EscribaEntitiesView from './components/EscribaEntitiesView';
 import EscribaNarrativeView from './components/EscribaNarrativeView';
 import EscribaEnsembleView from './components/EscribaEnsembleView';
-import EscribaMarketplaceView from './components/EscribaMarketplaceView';
 import EscribaSettingsView from './components/EscribaSettingsView';
 import HomeView from './components/HomeView';
 
@@ -32,6 +31,22 @@ function App() {
     const isScrumActive = Boolean(systemState?.scrum_active);
     const isEscribaActive = Boolean(systemState?.escriba_active);
     const hasAnyToolActive = isScrumActive || isEscribaActive;
+    const hasActiveEscribaProject = Boolean(
+      systemState?.active_project &&
+      systemState.active_project.trim() !== '' &&
+      systemState.active_project !== 'Sin proyecto' &&
+      systemState.active_project !== 'Ninguno'
+    );
+
+    // REGLA ESTRICTA DE ESCRIBA: Si no existe un proyecto, NUNCA permitir ver Chat ni herramientas de ESCRIBA.
+    // Siempre permanecer en el Gestor de Proyectos.
+    if (isEscribaActive && !hasActiveEscribaProject) {
+      if (viewName === 'chat' || (viewName.startsWith('escriba_') && viewName !== 'escriba_projects' && viewName !== 'escriba_settings')) {
+        setScrumPanelOpen(false);
+        setActiveView('escriba_projects');
+        return;
+      }
+    }
 
     if (viewName === 'scrum') {
       if (!isScrumActive) {
@@ -47,6 +62,13 @@ function App() {
     if (viewName.startsWith('escriba_') && !isEscribaActive) {
       setScrumPanelOpen(false);
       setActiveView('chat');
+      return;
+    }
+    // BLOQUEO ESTRICTO: No permitir abrir el Canva si no hay un proyecto activo
+    if (viewName === 'escriba_editor' && !hasActiveEscribaProject) {
+      alert("[AVISO] Para abrir el Canva de ESCRIBA, primero debes crear o seleccionar un proyecto activo en el Gestor de Proyectos.");
+      setScrumPanelOpen(false);
+      setActiveView('escriba_projects');
       return;
     }
     if ((viewName === 'rag' || viewName === 'projects') && !hasAnyToolActive) {
@@ -128,6 +150,23 @@ function App() {
     fetchHistory();
   }, [systemState?.escriba_active, systemState?.scrum_active, fetchSessions, fetchHistory]);
 
+  // Regla estricta de ESCRIBA: si no existe un proyecto activo, SIEMPRE permanecer en 'escriba_projects'
+  useEffect(() => {
+    if (!systemState) return;
+    const isEscribaActive = Boolean(systemState?.escriba_active);
+    const hasActiveEscribaProject = Boolean(
+      systemState?.active_project &&
+      systemState.active_project.trim() !== '' &&
+      systemState.active_project !== 'Sin proyecto' &&
+      systemState.active_project !== 'Ninguno'
+    );
+    if (isEscribaActive && !hasActiveEscribaProject) {
+      if (activeView === 'chat' || (activeView.startsWith('escriba_') && activeView !== 'escriba_projects' && activeView !== 'escriba_settings')) {
+        setActiveView('escriba_projects');
+      }
+    }
+  }, [systemState, activeView]);
+
   // Tema global de Nexus OS: Liquid Glass o Predeterminado (configurable o derivado)
   const isLiquidGlass = systemState?.theme === 'liquid_glass' || systemState?.liquid_glass_enabled || (systemState?.theme === undefined && systemState?.escriba_active);
 
@@ -148,7 +187,7 @@ function App() {
         await fetchAgencies();
         setMessages(prev => [
           ...prev,
-          { role: 'assistant', content: `✓ Agente cambiado a @${agentName}` }
+          { role: 'assistant', content: `[OK] Agente cambiado a @${agentName}` }
         ]);
         setActiveView('chat');
       }
@@ -161,12 +200,24 @@ function App() {
   const handleNewChat = async () => {
     try {
       if (systemState?.escriba_active) {
+        const hasProj = Boolean(
+          systemState?.active_project &&
+          systemState.active_project.trim() !== '' &&
+          systemState.active_project !== 'Sin proyecto' &&
+          systemState.active_project !== 'Ninguno'
+        );
+        if (!hasProj) {
+          alert("[AVISO] Para crear un nuevo chat en ESCRIBA, primero debes crear o seleccionar un proyecto activo en el Gestor de Proyectos.");
+          setActiveView('escriba_projects');
+          return;
+        }
+
         const projRes = await fetch('/api/escriba/projects');
         if (projRes.ok) {
           const projData = await projRes.json();
           const activeProj = projData.projects?.find(p => p.active);
           if (!activeProj) {
-            alert(" Para crear un nuevo chat en ESCRIBA, primero debes crear o seleccionar un proyecto activo.");
+            alert("[AVISO] Para crear un nuevo chat en ESCRIBA, primero debes crear o seleccionar un proyecto activo en el Gestor de Proyectos.");
             setActiveView('escriba_projects');
             return;
           }
@@ -259,18 +310,21 @@ function App() {
         await fetchHistory();
         await fetchSessions();
         await fetchState();
+        return { success: true, response: data.response };
       } else {
         const errData = await res.json();
         setMessages(prev => [
           ...prev,
           { role: 'assistant', content: ` Error: ${errData.detail || 'Ocurrió un problema en el servidor.'}` }
         ]);
+        return { success: false, error: errData.detail };
       }
     } catch (err) {
       setMessages(prev => [
         ...prev,
         { role: 'assistant', content: ' Error de conexión con la API de Nexus OS.' }
       ]);
+      return { success: false, error: 'Error de conexión' };
     }
   };
 
@@ -349,6 +403,18 @@ function App() {
     await fetchState();
   }, [fetchSessions, fetchHistory, fetchState]);
 
+  const isEscribaActive = Boolean(systemState?.escriba_active);
+  const hasActiveEscribaProject = Boolean(
+    systemState?.active_project &&
+    systemState.active_project.trim() !== '' &&
+    systemState.active_project !== 'Sin proyecto' &&
+    systemState.active_project !== 'Ninguno'
+  );
+  const isEscribaLocked = isEscribaActive && !hasActiveEscribaProject;
+  const currentView = (isEscribaLocked && activeView !== 'settings' && activeView !== 'store' && activeView !== 'escriba_settings')
+    ? 'escriba_projects'
+    : activeView;
+
   return (
     <div className={`app-layout ${isLiquidGlass ? 'theme-liquid-glass' : ''}`}>
       <Sidebar
@@ -357,7 +423,7 @@ function App() {
         sessionsData={sessionsData}
         activeSessionId={sessionsData?.active_session_id}
         activeAgent={systemState?.active_agent}
-        activeView={activeView}
+        activeView={currentView}
         onNavigate={handleNavigate}
         onAgentSwitch={handleAgentSwitch}
         onNewChat={handleNewChat}
@@ -371,7 +437,7 @@ function App() {
       />
 
       <main className="main-view-area">
-        {activeView === 'chat' && (
+        {currentView === 'chat' && (
           <ChatView
             messages={messages}
             onSendMessage={handleSendMessage}
@@ -387,35 +453,35 @@ function App() {
           />
         )}
 
-        {activeView === 'projects' && (
+        {currentView === 'projects' && (
           <ProjectView
             onNavigate={handleNavigate}
             onStateRefresh={() => { fetchState(); fetchHistory(); }}
           />
         )}
 
-        {activeView === 'rag' && (
+        {currentView === 'rag' && (
           <RagView
             onNavigate={handleNavigate}
             onStateRefresh={() => { fetchState(); fetchHistory(); }}
           />
         )}
 
-        {activeView === 'settings' && (
+        {currentView === 'settings' && (
           <SettingsView
             onNavigate={handleNavigate}
             onStateRefresh={() => { fetchState(); }}
           />
         )}
 
-        {activeView === 'scrum' && (
+        {currentView === 'scrum' && (
           <ScrumView
             onNavigate={handleNavigate}
             initialTab={scrumInitialTab}
           />
         )}
 
-        {activeView === 'store' && (
+        {currentView === 'store' && (
           <StoreView
             systemState={systemState}
             onNavigate={(viewName) => setActiveView(viewName)}
@@ -423,13 +489,13 @@ function App() {
           />
         )}
 
-        {activeView === 'escriba_dashboard' && (
+        {currentView === 'escriba_dashboard' && (
           <EscribaDashboardView
             onNavigate={(viewName) => setActiveView(viewName)}
           />
         )}
 
-        {activeView === 'escriba_projects' && (
+        {currentView === 'escriba_projects' && (
           <EscribaProjectsView
             onNavigate={(viewName) => setActiveView(viewName)}
             onProjectChange={async () => {
@@ -440,58 +506,53 @@ function App() {
           />
         )}
 
-        {activeView === 'escriba_editor' && (
+        {currentView === 'escriba_editor' && (
           <EscribaEditorView
             onNavigate={(viewName) => setActiveView(viewName)}
             onSendMessage={handleSendMessage}
             onSelectChapter={handleSelectChapter}
             isEscribaActive={Boolean(systemState?.escriba_active)}
+            activeProject={systemState?.active_project}
           />
         )}
 
-        {activeView === 'escriba_graph' && (
+        {currentView === 'escriba_graph' && (
           <EscribaGraphView
             onNavigate={(viewName) => setActiveView(viewName)}
             onSendMessage={handleSendMessage}
           />
         )}
 
-        {activeView === 'escriba_entities' && (
+        {currentView === 'escriba_entities' && (
           <EscribaEntitiesView
             onNavigate={(viewName) => setActiveView(viewName)}
             onSendMessage={handleSendMessage}
           />
         )}
 
-        {activeView === 'escriba_narrative' && (
+        {currentView === 'escriba_narrative' && (
           <EscribaNarrativeView
             onNavigate={(viewName) => setActiveView(viewName)}
             onSendMessage={handleSendMessage}
           />
         )}
 
-        {activeView === 'escriba_ensemble' && (
+        {currentView === 'escriba_ensemble' && (
           <EscribaEnsembleView
             onNavigate={(viewName) => setActiveView(viewName)}
             onSendMessage={handleSendMessage}
           />
         )}
 
-        {activeView === 'home' && (
+        {currentView === 'home' && (
           <HomeView
             systemState={systemState}
             onNavigate={(viewName) => setActiveView(viewName)}
           />
         )}
 
-        {activeView === 'escriba_settings' && (
+        {(currentView === 'escriba_settings' || currentView === 'escriba_marketplace') && (
           <EscribaSettingsView
-            onNavigate={(viewName) => setActiveView(viewName)}
-          />
-        )}
-
-        {activeView === 'escriba_marketplace' && (
-          <EscribaMarketplaceView
             onNavigate={(viewName) => setActiveView(viewName)}
           />
         )}

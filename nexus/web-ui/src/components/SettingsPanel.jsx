@@ -62,7 +62,7 @@ export default function SettingsPanel({ onClose, onStateRefresh }) {
         })
       });
       if (res.ok) {
-        setMessage({ type: 'success', text: '✓ Configuración guardada con éxito' });
+        setMessage({ type: 'success', text: '[OK] Configuración guardada con éxito' });
         await fetchConfig();
         onStateRefresh?.();
       }
@@ -82,7 +82,7 @@ export default function SettingsPanel({ onClose, onStateRefresh }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: `✓ Archivo de contexto ${action === 'add' ? 'agregado' : 'removido'}` });
+        setMessage({ type: 'success', text: `[OK] Archivo de contexto ${action === 'add' ? 'agregado' : 'removido'}` });
         if (action === 'add') setNewContextPath('');
         await fetchConfig();
         onStateRefresh?.();
@@ -94,12 +94,16 @@ export default function SettingsPanel({ onClose, onStateRefresh }) {
     }
   };
 
-  const handleToggleSkill = async (skillName, enabled) => {
+  const handleToggleSkill = async (skillIdentifier, enabled) => {
     try {
       const res = await fetch('/api/skills/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ skill_name: skillName, enabled })
+        body: JSON.stringify({
+          skill_name: skillIdentifier,
+          skill_id: skillIdentifier,
+          enabled
+        })
       });
       if (res.ok) {
         await fetchConfig();
@@ -119,7 +123,7 @@ export default function SettingsPanel({ onClose, onStateRefresh }) {
             <span className="modal-icon"></span>
             <h2>Configuración del Modelo y Contexto</h2>
           </div>
-          <button className="close-btn" onClick={onClose}>✕</button>
+          <button className="close-btn" onClick={onClose}>X</button>
         </div>
 
         {/* Tab Bar */}
@@ -248,7 +252,7 @@ export default function SettingsPanel({ onClose, onStateRefresh }) {
                   </div>
 
                   <button type="submit" className="btn btn-primary" disabled={saving}>
-                    {saving ? 'Guardando...' : '💾 Guardar Configuración del Modelo'}
+                    {saving ? 'Guardando...' : 'Guardar Configuración del Modelo'}
                   </button>
                 </form>
               )}
@@ -257,7 +261,7 @@ export default function SettingsPanel({ onClose, onStateRefresh }) {
               {activeTab === 'context' && (
                 <div className="context-files-section">
                   <div className="form-section">
-                    <h3>➕ Cargar Archivo en el Contexto del Modelo</h3>
+                    <h3>Cargar Archivo en el Contexto del Modelo</h3>
                     <form 
                       onSubmit={(e) => {
                         e.preventDefault();
@@ -303,33 +307,64 @@ export default function SettingsPanel({ onClose, onStateRefresh }) {
               )}
 
               {/* TAB 3: SKILLS */}
-              {activeTab === 'skills' && (
-                <div className="skills-section">
-                  <h3> Habilidades (Skills) Registradas</h3>
-                  {config?.available_skills?.length === 0 ? (
-                    <div className="empty-state-text">No hay habilidades registradas en este agente.</div>
-                  ) : (
-                    <div className="skills-grid">
-                      {config?.available_skills?.map((skill) => (
-                        <div key={skill.name} className="skill-card">
-                          <div className="skill-info">
-                            <span className="skill-name">{skill.name}</span>
-                            <span className="skill-desc">{skill.description || 'Sin descripción'}</span>
-                          </div>
-                          <label className="switch-toggle">
-                            <input 
-                              type="checkbox"
-                              checked={skill.enabled}
-                              onChange={(e) => handleToggleSkill(skill.name, e.target.checked)}
-                            />
-                            <span className="slider round" />
-                          </label>
-                        </div>
-                      ))}
+              {activeTab === 'skills' && (() => {
+                const isEscriba = Boolean(config?.escriba_active);
+                const isScrum = Boolean(config?.scrum_active) && !isEscriba;
+                const activeEngine = isEscriba ? 'escriba' : (isScrum ? 'jellyfish' : 'nexus');
+
+                const matchEcosystem = (skill) => {
+                  const sEco = (skill.ecosystem || '').toLowerCase();
+                  const agency = skill.agency || '';
+                  if (activeEngine === 'escriba') {
+                    return sEco === 'escriba' || agency === 'Creative';
+                  }
+                  if (activeEngine === 'jellyfish') {
+                    // Jellyfish tiene acceso a desarrollo/agile Y a soporte técnico/estratégico de Nexus
+                    return sEco === 'jellyfish' || sEco === 'nexus' || agency !== 'Creative';
+                  }
+                  return sEco === 'nexus' || ['Research', 'Legal & Media', 'Marketing'].includes(agency);
+                };
+
+                const visibleSkills = (config?.available_skills || []).filter(matchEcosystem);
+
+                return (
+                  <div className="skills-section">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <h3 style={{ margin: 0 }}>Habilidades ({activeEngine.toUpperCase()})</h3>
+                      <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '10px', background: 'rgba(59, 130, 246, 0.2)', color: '#93c5fd', fontWeight: 600 }}>
+                        {visibleSkills.length} disponibles
+                      </span>
                     </div>
-                  )}
-                </div>
-              )}
+                    {visibleSkills.length === 0 ? (
+                      <div className="empty-state-text">No hay habilidades registradas para el modo actual.</div>
+                    ) : (
+                      <div className="skills-grid">
+                        {visibleSkills.map((skill) => (
+                          <div key={skill.name} className="skill-card">
+                            <div className="skill-info">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                                <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '4px', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', fontWeight: 700 }}>
+                                  {skill.agency || 'General'}
+                                </span>
+                                <span className="skill-name">{skill.name}</span>
+                              </div>
+                              <span className="skill-desc">{skill.description || 'Sin descripción'}</span>
+                            </div>
+                            <label className="switch-toggle">
+                              <input 
+                                type="checkbox"
+                                checked={skill.enabled}
+                                onChange={(e) => handleToggleSkill(skill.skill_id || skill.name, e.target.checked)}
+                              />
+                              <span className="slider round" />
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </>
           )}
         </div>

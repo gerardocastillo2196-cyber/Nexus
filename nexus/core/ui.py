@@ -267,7 +267,7 @@ def interactive_file_browser(start_dir: str, ext: str = ".gguf") -> str | None:
         try:
             items = os.listdir(current_dir)
         except PermissionError:
-            _main_console.print(f"[red]❌ Permiso denegado: {current_dir}[/red]")
+            _main_console.print(f"[red][ERROR] Permiso denegado: {current_dir}[/red]")
             current_dir = os.path.dirname(current_dir)
             continue
         except FileNotFoundError:
@@ -289,19 +289,19 @@ def interactive_file_browser(start_dir: str, ext: str = ".gguf") -> str | None:
         dirs.sort(key=str.lower)
         files.sort(key=str.lower)
 
-        options = ["📁 .. (Subir un nivel)"]
-        options.extend([f"📁 {d}/" for d in dirs])
-        options.extend([f"📄 {f}" for f in files])
+        options = ["[DIR] .. (Subir un nivel)"]
+        options.extend([f"[DIR] {d}/" for d in dirs])
+        options.extend([f"[ARCHIVO] {f}" for f in files])
 
         selected = interactive_picker(f"NAVEGAR: {current_dir}", options, add_back=True)
         if not selected or selected == ".. VOLVER":
             return None
 
-        if selected == "📁 .. (Subir un nivel)":
+        if selected == "[DIR] .. (Subir un nivel)":
             current_dir = os.path.dirname(current_dir)
-        elif selected.startswith("📁 "):
+        elif selected.startswith("[DIR] "):
             current_dir = os.path.join(current_dir, selected[3:-1])
-        elif selected.startswith("📄 "):
+        elif selected.startswith("[ARCHIVO] "):
             return os.path.join(current_dir, selected[3:])
 
 
@@ -324,7 +324,7 @@ def interactive_picker(title: str, options: list, add_back: bool = True,
         La opción seleccionada, o None si se seleccionó 'VOLVER'.
     """
     if not options:
-        console.print("⚠ No hay opciones disponibles.")
+        console.print("[ADVERTENCIA] No hay opciones disponibles.")
         return None
 
     if add_back:
@@ -500,7 +500,7 @@ def handle_exit_flow(state) -> None:
     console.print(Panel(
         f"Se detectaron {len(errors)} errores durante esta sesión de Jellyfish.\n"
         "Puedes generar un diagnóstico inteligente utilizando el modelo activo antes de salir.",
-        title="⚠️ DIAGNÓSTICO DE ERRORES",
+        title="[ADVERTENCIA] DIAGNÓSTICO DE ERRORES",
         border_style="dim white"
     ))
 
@@ -513,7 +513,7 @@ def handle_exit_flow(state) -> None:
     if resp not in ("", "s", "si", "yes", "y"):
         return
 
-    console.print("🤖 Analizando trazas de error con el LLM en segundo plano...")
+    console.print("[IA] Analizando trazas de error con el LLM en segundo plano...")
 
     # Construir listado de trazas para el prompt
     error_list_str = ""
@@ -547,13 +547,13 @@ def handle_exit_flow(state) -> None:
         logger.error("Error al invocar LLM para diagnóstico: %s", le)
 
     if not analysis:
-        console.print("⚠ El modelo no pudo generar el diagnóstico o no está respondiendo.")
+        console.print("[ADVERTENCIA] El modelo no pudo generar el diagnóstico o no está respondiendo.")
         return
 
     # Mostrar hallazgos en pantalla
     console.print(Panel(
         Markdown(analysis),
-        title="📝 DIAGNÓSTICO DE LA IA",
+        title="[NOTA] DIAGNÓSTICO DE LA IA",
         border_style="dim white",
         expand=False
     ))
@@ -591,7 +591,7 @@ def handle_exit_flow(state) -> None:
                 f.write(report_content)
             
             link_text = osc8_link(f"file://{filepath}", filename)
-            console.print(f"✓ Reporte guardado con éxito en: [bold]{link_text}[/bold]\n")
+            console.print(f"[OK] Reporte guardado con éxito en: [bold]{link_text}[/bold]\n")
         except OSError as e:
             console.print(f"Error al escribir el archivo de reporte: {e}\n")
 

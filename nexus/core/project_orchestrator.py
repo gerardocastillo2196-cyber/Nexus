@@ -365,12 +365,12 @@ class ProjectOrchestrator:
                 temperature=temperature,
             )
             if not response or not response.strip():
-                logger.error("⚠️ El agente %s retornó un output vacío.", agent_name or "desconocido")
+                logger.error("[ADVERTENCIA] El agente %s retornó un output vacío.", agent_name or "desconocido")
                 return ""
             return response
         except Exception as e:
-            logger.error(f"❌ Excepción crítica en _call_agent para {self.state.model}: {str(e)}", exc_info=True)
-            return f"## 📋 ERROR DE PROCESAMIENTO\n\nOcurrió una excepción en el harness del agente: {str(e)}"
+            logger.error(f"[ERROR] Excepción crítica en _call_agent para {self.state.model}: {str(e)}", exc_info=True)
+            return f"## [LISTA] ERROR DE PROCESAMIENTO\n\nOcurrió una excepción en el harness del agente: {str(e)}"
 
     def _build_accumulated_context(self) -> str:
         """Construye contexto con todos los archivos generados hasta ahora."""
@@ -387,7 +387,7 @@ class ProjectOrchestrator:
         """Auto-genera documentos de contexto técnico escaneando el proyecto real."""
         import subprocess
 
-        console.print("\n━━━ FASE 0: 🧠 Generación de Inteligencia del Proyecto ━━━")
+        console.print("\n━━━ FASE 0: [ORQUESTADOR] Generación de Inteligencia del Proyecto ━━━")
         t0 = time.perf_counter()
 
         # 1. PROJECT_TREE.md — Árbol de directorios real
@@ -404,7 +404,7 @@ class ProjectOrchestrator:
             tree_content = "No disponible"
 
         self._write_project_file("PROJECT_TREE.md", (
-            "# 🌳 Árbol del Proyecto (Auto-generado)\n\n"
+            "# [ARBOL] Árbol del Proyecto (Auto-generado)\n\n"
             "```\n" + tree_content[:8000] + "\n```\n\n"
             "*Auto-generado por Jellyfish OS. No editar manualmente.*\n"
         ))
@@ -424,7 +424,7 @@ class ProjectOrchestrator:
             tokens_result = self._call_agent(tokens_prompt, f"ARCHITECTURE.md:\n{arch[:6000]}")
             self._write_project_file("DESIGN_TOKENS.md", tokens_result)
         else:
-            self._write_project_file("DESIGN_TOKENS.md", "# 🎨 Design Tokens\n\nNo se detectó un archivo ARCHITECTURE.md inicial. Los agentes definirán los convenciones sobre la marcha.")
+            self._write_project_file("DESIGN_TOKENS.md", "# [DISENO] Design Tokens\n\nNo se detectó un archivo ARCHITECTURE.md inicial. Los agentes definirán los convenciones sobre la marcha.")
 
         # 3. DATA_SCHEMA.md — Escanea modelos de datos existentes
         schema_parts = []
@@ -438,23 +438,23 @@ class ProjectOrchestrator:
                         schema_parts.append(f"### {rel}\n```\n{content[:3000]}\n```\n")
         if schema_parts:
             self._write_project_file("DATA_SCHEMA.md", (
-                "# 📊 Esquema de Datos (Auto-generado)\n\n" + "\n".join(schema_parts) +
+                "# [METRICAS] Esquema de Datos (Auto-generado)\n\n" + "\n".join(schema_parts) +
                 "\n*Auto-generado por Jellyfish OS.*\n"
             ))
         else:
-            self._write_project_file("DATA_SCHEMA.md", "# 📊 Esquema de Datos\n\nNo se detectaron modelos de datos iniciales. Los agentes actualizarán este archivo cuando creen la base de datos.")
+            self._write_project_file("DATA_SCHEMA.md", "# [METRICAS] Esquema de Datos\n\nNo se detectaron modelos de datos iniciales. Los agentes actualizarán este archivo cuando creen la base de datos.")
 
         # 3.5. COMPONENT_INDEX.md & DEPENDENCY_MANIFEST.md (Fallbacks)
         if not os.path.isfile(os.path.join(self.project_path, "COMPONENT_INDEX.md")):
-            self._write_project_file("COMPONENT_INDEX.md", "# 🧩 Índice de Componentes\n\n(Archivo autogenerado vacío para uso de los agentes)")
+            self._write_project_file("COMPONENT_INDEX.md", "# [COMPONENTES] Índice de Componentes\n\n(Archivo autogenerado vacío para uso de los agentes)")
         if not os.path.isfile(os.path.join(self.project_path, "DEPENDENCY_MANIFEST.md")):
-            self._write_project_file("DEPENDENCY_MANIFEST.md", "# 📦 Manifiesto de Dependencias\n\n(Archivo autogenerado vacío para uso de los agentes)")
+            self._write_project_file("DEPENDENCY_MANIFEST.md", "# [PAQUETE] Manifiesto de Dependencias\n\n(Archivo autogenerado vacío para uso de los agentes)")
 
         # 4. SECURITY.md — Guardrails de seguridad
         security_path = os.path.join(self.project_path, "SECURITY.md")
         if not os.path.isfile(security_path):
             self._write_project_file("SECURITY.md", (
-                "# 🔒 Guardrails de Seguridad\n\n"
+                "# [SEGURIDAD] Guardrails de Seguridad\n\n"
                 "## Reglas Obligatorias para Todo Agente\n"
                 "1. **NUNCA** hardcodear tokens, contraseñas, API keys o URIs de BD en el código.\n"
                 "   - Usar `os.getenv()` (Python) o `process.env` (Node.js).\n"
@@ -480,7 +480,7 @@ class ProjectOrchestrator:
                     components.append(f"- `{rel}`")
         if components:
             self._write_project_file("COMPONENT_INDEX.md", (
-                "# 🧩 Índice de Componentes (Auto-generado)\n\n"
+                "# [COMPONENTES] Índice de Componentes (Auto-generado)\n\n"
                 "Archivos reutilizables detectados en el proyecto:\n\n"
                 + "\n".join(components[:50]) +
                 "\n\n*Antes de crear un componente nuevo, verifica si ya existe aquí.*\n"
@@ -501,7 +501,7 @@ class ProjectOrchestrator:
                         dep_parts.append(f"### {subdir}/{dep_file}\n```\n{content[:2000]}\n```\n")
         if dep_parts:
             self._write_project_file("DEPENDENCY_MANIFEST.md", (
-                "# 📦 Dependencias del Proyecto (Auto-generado)\n\n"
+                "# [PAQUETE] Dependencias del Proyecto (Auto-generado)\n\n"
                 "**REGLA:** Solo usa librerías que estén listadas aquí. "
                 "Si necesitas una nueva, indícalo explícitamente.\n\n"
                 + "\n".join(dep_parts) +
@@ -515,7 +515,7 @@ class ProjectOrchestrator:
             retro_path = os.path.join(AGENCY_DIR, "memory", "retrospective_rules.md")
             retro_content = _safe_read(retro_path) if os.path.isfile(retro_path) else ""
             self._write_project_file("PLAYBOOK.md", (
-                "# 📖 Playbook de Soluciones Conocidas\n\n"
+                "# [DOCUMENTACION] Playbook de Soluciones Conocidas\n\n"
                 "## Lecciones de Sprints Anteriores\n"
                 + (retro_content if retro_content else "_(Ninguna todavía)_\n") +
                 "\n## Soluciones a Errores Frecuentes\n"
@@ -539,10 +539,10 @@ class ProjectOrchestrator:
         intel_files = [f for f in ["PROJECT_TREE.md", "DESIGN_TOKENS.md", "DATA_SCHEMA.md",
                                     "SECURITY.md", "COMPONENT_INDEX.md", "DEPENDENCY_MANIFEST.md",
                                     "PLAYBOOK.md", "BUSINESS_CONTEXT.md"] if os.path.isfile(os.path.join(self.project_path, f))]
-        console.print(f"✓ Inteligencia del proyecto generada: {len(intel_files)} documentos ({elapsed:.1f}s)")
+        console.print(f"[OK] Inteligencia del proyecto generada: {len(intel_files)} documentos ({elapsed:.1f}s)")
         self.metrics.append({
-            "fase": "🧠 Inteligencia", "detalle": f"{len(intel_files)} docs generados",
-            "tiempo": elapsed, "status": "✅",
+            "fase": "[ORQUESTADOR] Inteligencia", "detalle": f"{len(intel_files)} docs generados",
+            "tiempo": elapsed, "status": "[COMPLETADO]",
         })
 
     # ─── FASE ÚNICA (Sprint 14): Mega-Agente Planificador ─────────────────
@@ -591,12 +591,12 @@ class ProjectOrchestrator:
                 if (time.time() - mtime) < 86400: # 24 horas de validez de caché
                     with open(cap_path, "r", encoding="utf-8") as f:
                         capabilities = json.load(f)
-                    console.print("✓ Capacidades del sistema cargadas desde caché (env_capabilities.json)")
+                    console.print("[OK] Capacidades del sistema cargadas desde caché (env_capabilities.json)")
                     return capabilities
             except Exception as e:
                 logger.warning("Error leyendo caché de capacidades: %s. Re-ejecutando diagnóstico.", e)
 
-        console.print("\n🔍 Ejecutando Agente Validador del Entorno (Environment Probe)...")
+        console.print("\n[BUSQUEDA] Ejecutando Agente Validador del Entorno (Environment Probe)...")
         capabilities = {}
         
         commands = {
@@ -634,7 +634,7 @@ class ProjectOrchestrator:
         try:
             with open(cap_path, "w", encoding="utf-8") as f:
                 json.dump(capabilities, f, indent=2)
-            console.print(f"✓ Capacidades del sistema guardadas en env_capabilities.json")
+            console.print(f"[OK] Capacidades del sistema guardadas en env_capabilities.json")
         except Exception as e:
             logger.error("Error escribiendo env_capabilities.json: %s", e)
             
@@ -719,13 +719,13 @@ class ProjectOrchestrator:
             from rich.panel import Panel
             missing_str = ", ".join(missing_binaries)
             error_msg = (
-                f"[bold red]❌ [IMPEDIMENTO CRÍTICO] Binarios faltantes en el Sistema Operativo[/bold red]\n\n"
+                f"[bold red][ERROR] [IMPEDIMENTO CRÍTICO] Binarios faltantes en el Sistema Operativo[/bold red]\n\n"
                 f"El requerimiento técnico del proyecto exige las siguientes herramientas: [bold yellow]{missing_str}[/bold yellow], "
                 f"pero los comandos correspondientes no fueron encontrados en la variable PATH del sistema operativo.\n\n"
                 f"Por favor, instala la(s) herramienta(s) en el SO ({missing_str}) y vuelve a ejecutar el pipeline."
             )
             console.print("\n" + "=" * 80)
-            console.print(Panel(error_msg, title="[bold red]🚨 DETENCIÓN POR IMPEDIMENTO CRÍTICO DE ENTORNO[/bold red]", border_style="red"))
+            console.print(Panel(error_msg, title="[bold red][ALERTA CRITICA] DETENCIÓN POR IMPEDIMENTO CRÍTICO DE ENTORNO[/bold red]", border_style="red"))
             console.print("=" * 80 + "\n")
             
             logger.error("[IMPEDIMENTO CRÍTICO] Stack inalcanzable. Binarios faltantes: %s", missing_binaries)
@@ -737,10 +737,10 @@ class ProjectOrchestrator:
                 "output_file": "env_capabilities.json"
             })
             self.metrics.append({
-                "fase": "🔍 Validación Entorno",
+                "fase": "[BUSQUEDA] Validación Entorno",
                 "detalle": f"[IMPEDIMENTO CRÍTICO] Faltan: {missing_str}",
                 "tiempo": 0.1,
-                "status": "❌"
+                "status": "[ERROR]"
             })
             return False
 
@@ -850,7 +850,7 @@ class ProjectOrchestrator:
     def _run_build_command(self, cmd: str) -> tuple[int, str]:
         """Ejecuta el comando de compilación en el directorio del proyecto y captura salida/código de salida."""
         from core.terminal import run_terminal_command
-        console.print(f"\n       🛠 Solicitando ejecución de comando de compilación: {cmd}")
+        console.print(f"\n       [COMPILACION] Solicitando ejecución de comando de compilación: {cmd}")
         
         ret_dict = {'returncode': 0}
         output = run_terminal_command(
@@ -989,14 +989,14 @@ class ProjectOrchestrator:
 
         # 2. Reconstruir la sección DONE
         done_section = (
-            f"## ✅ HECHO (DONE)\n\n"
+            f"## [COMPLETADO] HECHO (DONE)\n\n"
             f"| ID | Tarea | Asignado | Completado |\n"
             f"|---|---|---|---|\n"
             f"{done_rows}\n"
         )
         
         # 3. Insertar o reemplazar la sección DONE actual
-        pattern = r"##\s*(?:✅\s*)?(?:HECHO|DONE|Completadas|Completado).*?(?=\n##|\n---|\n\*|$)"
+        pattern = r"##\s*(?:[COMPLETADO]\s*)?(?:HECHO|DONE|Completadas|Completado).*?(?=\n##|\n---|\n\*|$)"
         if re.search(pattern, board, flags=re.IGNORECASE | re.DOTALL):
             new_board = re.sub(pattern, done_section, board, flags=re.IGNORECASE | re.DOTALL)
         else:
@@ -1045,7 +1045,7 @@ class ProjectOrchestrator:
                 
                 # Reconstruir sección TODO
                 todo_section = (
-                    f"## 📋 POR HACER (TODO)\n\n"
+                    f"## [LISTA] POR HACER (TODO)\n\n"
                     f"| ID | Tarea | Asignado | Estado |\n"
                     f"|---|---|---|---|\n"
                     f"{todo_rows}\n"
@@ -1053,29 +1053,29 @@ class ProjectOrchestrator:
                 
                 # Vaciar EN PROGRESO
                 doing_section = (
-                    f"## ⏳ EN PROGRESO (DOING)\n\n"
+                    f"## [EN PROCESO] EN PROGRESO (DOING)\n\n"
                     f"| ID | Tarea | Asignado | Progreso |\n"
                     f"|---|---|---|---|\n"
                 )
                 
                 # Reconstruir sección DONE
                 done_section = (
-                    f"## ✅ HECHO (DONE)\n\n"
+                    f"## [COMPLETADO] HECHO (DONE)\n\n"
                     f"| ID | Tarea | Asignado | Completado |\n"
                     f"|---|---|---|---|\n"
                     f"{done_rows}\n"
                 )
                 
                 # Reemplazar secciones usando regex
-                pattern_todo = r"##\s*(?:📋\s*)?(?:POR HACER|TODO).*?(?=\n##|\n---|\n\*|$)"
+                pattern_todo = r"##\s*(?:[LISTA]\s*)?(?:POR HACER|TODO).*?(?=\n##|\n---|\n\*|$)"
                 if re.search(pattern_todo, board, flags=re.IGNORECASE | re.DOTALL):
                     board = re.sub(pattern_todo, todo_section, board, flags=re.IGNORECASE | re.DOTALL)
                     
-                pattern_doing = r"##\s*(?:⏳\s*)?(?:EN PROGRESO|IN PROGRESS|DOING).*?(?=\n##|\n---|\n\*|$)"
+                pattern_doing = r"##\s*(?:[EN PROCESO]\s*)?(?:EN PROGRESO|IN PROGRESS|DOING).*?(?=\n##|\n---|\n\*|$)"
                 if re.search(pattern_doing, board, flags=re.IGNORECASE | re.DOTALL):
                     board = re.sub(pattern_doing, doing_section, board, flags=re.IGNORECASE | re.DOTALL)
                     
-                pattern_done = r"##\s*(?:✅\s*)?(?:HECHO|DONE|Completadas|Completado).*?(?=\n##|\n---|\n\*|$)"
+                pattern_done = r"##\s*(?:[COMPLETADO]\s*)?(?:HECHO|DONE|Completadas|Completado).*?(?=\n##|\n---|\n\*|$)"
                 if re.search(pattern_done, board, flags=re.IGNORECASE | re.DOTALL):
                     board = re.sub(pattern_done, done_section, board, flags=re.IGNORECASE | re.DOTALL)
                 else:
@@ -1095,12 +1095,12 @@ class ProjectOrchestrator:
         # Sprint 12 — Preguntar permisos globales al inicio para evitar saturación
         try:
             global_approve = Confirm.ask(
-                "\n⚡ ¿Deseas activar auto-aprobación GLOBAL para TODOS los comandos de esta ejecución? [y/n]",
+                "\n[ACCION] ¿Deseas activar auto-aprobación GLOBAL para TODOS los comandos de esta ejecución? [y/n]",
                 default=False
             )
             if global_approve:
                 self.state.enable_project_auto_approve()
-                console.print("✓ Auto-aprobación global activada para este proceso.\n")
+                console.print("[OK] Auto-aprobación global activada para este proceso.\n")
         except (EOFError, KeyboardInterrupt):
             pass
 
@@ -1111,14 +1111,14 @@ class ProjectOrchestrator:
             self._run_environment_probe()
         except Exception as e:
             logger.error("Error ejecutando Environment Probe: %s", e)
-            console.print(f"⚠ No se pudo ejecutar el Environment Probe: {e}")
+            console.print(f"[ADVERTENCIA] No se pudo ejecutar el Environment Probe: {e}")
 
         # FASE 0: Generación de Inteligencia del Proyecto
         try:
             self._generate_project_intelligence(user_idea)
         except Exception as e:
             logger.error("Error generando inteligencia del proyecto: %s", e)
-            console.print(f"⚠ No se pudo generar la inteligencia del proyecto: {e}")
+            console.print(f"[ADVERTENCIA] No se pudo generar la inteligencia del proyecto: {e}")
 
         # Comprobar si existe un sprint activo o planeado en este proyecto
         resume_existing = False
@@ -1156,7 +1156,7 @@ class ProjectOrchestrator:
                 else:
                     try:
                         resume_existing = Confirm.ask(
-                            "\n🔄 Se detectó un sprint activo con tareas pendientes en este proyecto.\n"
+                            "\n[RECARGA] Se detectó un sprint activo con tareas pendientes en este proyecto.\n"
                             "¿Deseas reanudar las tareas pendientes (y) o planificar tu NUEVO requerimiento desde cero (n)?",
                             default=False
                         )
@@ -1166,7 +1166,7 @@ class ProjectOrchestrator:
                 resume_existing = False
 
         if resume_existing:
-            console.print("[bold green]✓ Reanudando el sprint existente. Saltando fases de planificación...[/bold green]")
+            console.print("[bold green][OK] Reanudando el sprint existente. Saltando fases de planificación...[/bold green]")
             # Tratar de cargar historias del backlog como idea contextual si es posible
             backlog_content = self._read_project_file("BACKLOG.md")
             if backlog_content:
@@ -1186,7 +1186,7 @@ class ProjectOrchestrator:
                     shutil.rmtree(src_dir)
                 except Exception:
                     pass
-            console.print("[bold cyan]🧹 Tablero anterior y artefactos limpiados. Iniciando planificación del nuevo requerimiento...[/bold cyan]")
+            console.print("[bold cyan][LIMPIEZA] Tablero anterior y artefactos limpiados. Iniciando planificación del nuevo requerimiento...[/bold cyan]")
             self.state.set_pipeline_status("OK")
 
             # ── Sprint 14: Mega-Agente Planificador ──────────────────────────
@@ -1212,29 +1212,29 @@ class ProjectOrchestrator:
                 self._run_task_runner(user_idea)
 
                 if getattr(self.state, "global_status", "") == "ERROR":
-                    console.print("\n[red]⚠ El Task Runner reportó un error crítico. Abortando compilación final.[/red]")
+                    console.print("\n[red][ADVERTENCIA] El Task Runner reportó un error crítico. Abortando compilación final.[/red]")
                 else:
                     build_cmd = self._detect_compile_command()
                     if build_cmd:
-                        console.print("\n🛠 Ejecutando compilación de validación final del proyecto...")
+                        console.print("\n[COMPILACION] Ejecutando compilación de validación final del proyecto...")
                         returncode, build_output = self._run_build_command(build_cmd)
                         
                         from core.terminal import screen_console
                         if returncode == 0:
-                            screen_console.print("✓ ¡Compilación final exitosa! El proyecto está listo.\n")
+                            screen_console.print("[OK] ¡Compilación final exitosa! El proyecto está listo.\n")
                             self.metrics.append({
-                                "fase": "🛠 Compilación Final",
+                                "fase": "[COMPILACION] Compilación Final",
                                 "detalle": f"Comando: {build_cmd}",
                                 "tiempo": 0.0,
-                                "status": "✅",
+                                "status": "[COMPLETADO]",
                             })
                         else:
-                            screen_console.print(f"⚠ La compilación final falló con código {returncode}.\n")
+                            screen_console.print(f"[ADVERTENCIA] La compilación final falló con código {returncode}.\n")
                             self.metrics.append({
-                                "fase": "🛠 Compilación Final",
+                                "fase": "[COMPILACION] Compilación Final",
                                 "detalle": "Fallo de compilación",
                                 "tiempo": 0.0,
-                                "status": "❌",
+                                "status": "[ERROR]",
                             })
         finally:
             self.state.silent_execution = False
@@ -1265,7 +1265,7 @@ class ProjectOrchestrator:
     def _print_summary_table(self, total_time: float) -> None:
         """Imprime tabla de resumen del pipeline."""
         table = Table(
-            title="🪼 Resumen del Pipeline Autónomo",
+            title="[JELLYFISH] Resumen del Pipeline Autónomo",
             show_header=True, header_style="bold purple",
             border_style="dim white", show_footer=True,
         )
@@ -1285,15 +1285,15 @@ class ProjectOrchestrator:
 
     def _generate_final_summary(self, user_idea: str, total_time: float) -> str:
         """Genera resumen textual conciso de lo fallido y el estado actual."""
-        completed_tasks = [m for m in self.metrics if m["status"] == "✅"]
-        failed_tasks = [m for m in self.metrics if m["status"] in ("❌", "⚠")]
+        completed_tasks = [m for m in self.metrics if m["status"] == "[COMPLETADO]"]
+        failed_tasks = [m for m in self.metrics if m["status"] in ("[ERROR]", "[ADVERTENCIA]")]
         
         status_project = "COMPLETADO CON ÉXITO"
         if failed_tasks:
             status_project = "INCOMPLETO / CON ADVERTENCIAS (Revisar logs)"
 
         summary_lines = [
-            f"🪼 REPORTE FINAL DEL PROYECTO ({total_time:.1f}s)",
+            f"[JELLYFISH] REPORTE FINAL DEL PROYECTO ({total_time:.1f}s)",
             f"  [bold]• Estado actual:[/bold] {status_project}",
             f"  [bold]• Directorio:[/bold] {self.project_path}",
             f"  [bold]• Tareas exitosas:[/bold] {len(completed_tasks)}/{len(self.metrics)}"
@@ -1314,12 +1314,12 @@ class ProjectOrchestrator:
 
         # Imprimir por pantalla
         console.print()
-        console.print(Panel("\n".join(summary_lines), title="📋 Reporte de Estado", border_style="dim white", expand=False))
+        console.print(Panel("\n".join(summary_lines), title="[LISTA] Reporte de Estado", border_style="dim white", expand=False))
         console.print()
 
         # Retornar versión markdown para el historial
         md_summary = (
-            f"🪼 **Reporte Final del Proyecto** ({total_time:.1f}s)\n\n"
+            f"[JELLYFISH] **Reporte Final del Proyecto** ({total_time:.1f}s)\n\n"
             f"- **Estado:** {status_project}\n"
             f"- **Tareas exitosas:** {len(completed_tasks)}/{len(self.metrics)}\n"
         )
@@ -1399,7 +1399,7 @@ class ProjectOrchestrator:
             else:
                 subprocess.run(["git", "reset", "--hard", "HEAD"], cwd=self.project_path, capture_output=True, timeout=10)
             subprocess.run(["git", "clean", "-fd"], cwd=self.project_path, capture_output=True, timeout=10)
-            console.print("       ✓ Espacio de trabajo revertido al estado anterior de forma segura.")
+            console.print("       [OK] Espacio de trabajo revertido al estado anterior de forma segura.")
         except Exception as e:
             logger.error("Error durante git rollback de la tarea %s: %s", task_id, e)
 
@@ -1444,7 +1444,7 @@ class ProjectOrchestrator:
                 timeout=10
             )
             if res_checkout.returncode == 0:
-                console.print(f"       [dim]🌿 Rama Git de tarea creada y activa: {task_branch}[/dim]")
+                console.print(f"       [dim][GIT] Rama Git de tarea creada y activa: {task_branch}[/dim]")
                 return True, original_branch
         except Exception as e:
             logger.warning("Error iniciando rama git para tarea %s: %s", task_id, e)
@@ -1477,11 +1477,11 @@ class ProjectOrchestrator:
                     timeout=15
                 )
                 if merge_res.returncode == 0:
-                    console.print(f"       ✓ Rama {task_branch} integrada exitosamente a {original_branch}.")
+                    console.print(f"       [OK] Rama {task_branch} integrada exitosamente a {original_branch}.")
                     # Borrar rama de la tarea
                     subprocess.run(["git", "branch", "-d", task_branch], cwd=self.project_path, capture_output=True, timeout=10)
                 else:
-                    console.print(f"       ⚠️ Conflicto al integrar {task_branch}. Forzando rollback...")
+                    console.print(f"       [ADVERTENCIA] Conflicto al integrar {task_branch}. Forzando rollback...")
                     # Si falla, abortar merge y resetear
                     subprocess.run(["git", "merge", "--abort"], cwd=self.project_path, capture_output=True, timeout=10)
                     subprocess.run(["git", "checkout", original_branch], cwd=self.project_path, capture_output=True, timeout=10)
@@ -1495,13 +1495,13 @@ class ProjectOrchestrator:
                 subprocess.run(["git", "branch", "-D", task_branch], cwd=self.project_path, capture_output=True, timeout=10)
                 # Limpiar
                 subprocess.run(["git", "clean", "-fd"], cwd=self.project_path, capture_output=True, timeout=10)
-                console.print("       ✓ Espacio de trabajo limpio.")
+                console.print("       [OK] Espacio de trabajo limpio.")
         except Exception as e:
             logger.error("Error al finalizar rama git para tarea %s: %s", task_id, e)
 
     def _run_dod_validation(self, task_id: str, agent_name: str, task_desc: str, output_file: str, file_content: str) -> tuple[bool, str]:
         """Valida que la tarea cumpla con la Definition of Done (DoD) usando un agente evaluador (Mejora 15)."""
-        console.print(f"       [dim]🔍 Validando Definition of Done (DoD) para la tarea {task_id}...[/dim]")
+        console.print(f"       [dim][BUSQUEDA] Validando Definition of Done (DoD) para la tarea {task_id}...[/dim]")
         
         system_prompt = (
             "Eres un QA Automation Engineer experto.\n"
@@ -1561,7 +1561,7 @@ class ProjectOrchestrator:
         if not new_intents:
             return
 
-        console.print(f"\n[bold yellow]📖 REVISIÓN DE VOCABULARIO (Translator Aprendizaje)[/bold yellow]")
+        console.print(f"\n[bold yellow][DOCUMENTACION] REVISIÓN DE VOCABULARIO (Translator Aprendizaje)[/bold yellow]")
         console.print(f"Se han creado {len(new_intents)} nuevos tokens de intención en este sprint:")
         for idx, (nat, comp) in enumerate(new_intents.items(), 1):
             console.print(f"  {idx}. '{nat}' -> {comp}")
@@ -1570,7 +1570,7 @@ class ProjectOrchestrator:
             from rich.prompt import Confirm
             keep = Confirm.ask("\n¿Deseas mantener todos estos tokens sin cambios?", default=True)
             if keep:
-                console.print("[green]✓ Tokens guardados permanentemente.[/green]")
+                console.print("[green][OK] Tokens guardados permanentemente.[/green]")
                 self.state.new_intents = {}
                 return
         except Exception:
@@ -1588,12 +1588,12 @@ class ProjectOrchestrator:
                 if action.lower() == 'd':
                     if nat in translator.intent_map:
                         del translator.intent_map[nat]
-                    console.print(f"[red]✗ Eliminado.[/red]")
+                    console.print(f"[red][X] Eliminado.[/red]")
                 elif action:
                     if not action.startswith("[") or not action.endswith("]"):
                         action = f"[{action}]"
                     translator.intent_map[nat] = action.upper()
-                    console.print(f"[green]✓ Actualizado a: {action.upper()}[/green]")
+                    console.print(f"[green][OK] Actualizado a: {action.upper()}[/green]")
                 else:
                     console.print("[dim]Manteniendo sin cambios.[/dim]")
             except (KeyboardInterrupt, EOFError):
@@ -1601,4 +1601,4 @@ class ProjectOrchestrator:
                 
         translator._save_map()
         self.state.new_intents = {}
-        console.print("[green]✓ Revisión de vocabulario completada.[/green]")
+        console.print("[green][OK] Revisión de vocabulario completada.[/green]")

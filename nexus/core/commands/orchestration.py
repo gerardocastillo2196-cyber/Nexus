@@ -17,13 +17,13 @@ def _handle_auto(arg: str, state, display_header_func) -> None:
 
     if not state.active_project:
         console.print(
-            "⚠ No hay un proyecto activo. "
+            "[ADVERTENCIA] No hay un proyecto activo. "
             "Usa [bold]/project new <ruta>[/bold] primero para crear uno."
         )
         return
 
     if state.is_pipeline_paused():
-        console.print("\n[bold red]⚠️  PIPELINE BLOQUEADO - Sentinel Interactive Pause (SIP) Activo[/bold red]")
+        console.print("\n[bold red][ADVERTENCIA]  PIPELINE BLOQUEADO - Sentinel Interactive Pause (SIP) Activo[/bold red]")
         console.print("[yellow]El proyecto se encuentra en modo de 'Esperando Intervención' debido a un fallo previo.[/yellow]")
         from core.agency_orchestrator import AgencyOrchestrator
         orchestrator = AgencyOrchestrator(state)
@@ -88,10 +88,10 @@ def _handle_agency(arg: str, state, display_header_func) -> None:
     """Manejador del comando /agency."""
     parts = arg.strip().split()
     if not parts:
-        console.print("\n🏢 Catálogo de Agencias de Jellyfish OS v6")
+        console.print("\n[AGENCIAS] Catálogo de Agencias de Jellyfish OS v6")
         console.print(f"Agencia activa actual: {state.active_agency.upper()}\n")
         for agency, agents in state.agency_catalog.items():
-            active_marker = "★ " if agency == state.active_agency else "  "
+            active_marker = "* " if agency == state.active_agency else "  "
             agents_list = ", ".join(f"@{a}" for a in agents)
             console.print(f"{active_marker}{agency.upper()} -> {agents_list}")
         console.print("\n[dim]Usa `/agency switch <nombre>` para cambiar de agencia.[/dim]\n")
@@ -113,7 +113,7 @@ def _handle_agency(arg: str, state, display_header_func) -> None:
         state.load_agent("default")
         state.active_agency = target_agency
         
-        console.print(f"✓ Cambiado exitosamente a la agencia: {target_agency.upper()}")
+        console.print(f"[OK] Cambiado exitosamente a la agencia: {target_agency.upper()}")
         if display_header_func:
             display_header_func()
     else:

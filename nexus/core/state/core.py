@@ -467,29 +467,29 @@ class JellyfishState:
         if self.history:
             recent_text = " ".join(msg.get("content", "") for msg in self.history[-3:]).lower()
         
-        for skill_path in self.active_skills:
-            if "template.md" in skill_path:
+        for skill_entry in list(self.active_skills):
+            if "template.md" in skill_entry or "__init__" in skill_entry:
                 continue
-            
-            skill_name = os.path.basename(skill_path)[:-3].lower()
-            
-            if len(self.active_skills) <= 3 or not recent_text or skill_name in recent_text or "always" in skill_name:
+
+            skill_name = os.path.basename(skill_entry)[:-3].lower() if ("/" in skill_entry or "\\" in skill_entry) else skill_entry.lower()
+            if skill_name.endswith(".py") or skill_name.endswith(".md"):
+                skill_name = skill_name[:-3]
+
+            if len(self.active_skills) <= 5 or not recent_text or skill_name in recent_text or "always" in skill_name:
                 content = ""
-                if skill_path.endswith(".py"):
-                    skill_inst = SkillRegistry.get(skill_name)
-                    if skill_inst:
-                        try:
-                            content = skill_inst.get_instructions()
-                        except Exception as e:
-                            logger.warning("Error al obtener instrucciones de la skill %s: %s", skill_name, e)
-                
-                if not content:
-                    content = _safe_read(skill_path)
-                    
+                skill_inst = SkillRegistry.get(skill_entry) or SkillRegistry.get(skill_name)
+                if skill_inst:
+                    try:
+                        content = skill_inst.get_instructions()
+                    except Exception as e:
+                        logger.warning("Error al obtener instrucciones de la skill %s: %s", skill_name, e)
+                elif skill_entry.endswith(".md") and os.path.isfile(skill_entry):
+                    content = _safe_read(skill_entry)
+
                 if content:
                     self.static_history.append({
                         "role": "system",
-                        "content": f"[SKILL]\n{content}"
+                        "content": f"[SKILL: {skill_inst.name if skill_inst else skill_name}]\n{content}"
                     })
 
         total_ctx_chars = 0
@@ -589,7 +589,7 @@ class JellyfishState:
                         "1. DESIGN_TOKENS.md, DATA_SCHEMA.md y SECURITY.md son las fuentes primarias de verdad técnica. Úsalos para nombrar variables, elegir patrones y respetar guardrails.\n"
                         "2. COMPONENT_INDEX.md lista los componentes existentes. ANTES de crear uno nuevo, verifica si ya existe.\n"
                         "3. DEPENDENCY_MANIFEST.md lista las librerías permitidas. NO inventes imports de librerías no listadas.\n"
-                        "4. El SPRINT_BOARD.md es la FUENTE EXACTA del estado de las tareas. Si el usuario pregunta '¿cómo va el proyecto?', lee las tareas completadas (✅), fallidas (❌) y pendientes (TODO).\n"
+                        "4. El SPRINT_BOARD.md es la FUENTE EXACTA del estado de las tareas. Si el usuario pregunta '¿cómo va el proyecto?', lee las tareas completadas ([COMPLETADO]), fallidas ([ERROR]) y pendientes (TODO).\n"
                         "5. Al citar archivos como fuentes, DEBES usar el atributo `absolute_path` proporcionado en cada `<internal_doc>`. No inventes rutas.\n"
                         "6. Sintetiza la información en lenguaje natural y ejecutivo. NO muestres tablas ni contenido literal a menos que el usuario lo pida.\n\n"
                         f'<project_state project="{_xml_attr(project_name)}" '
@@ -733,12 +733,12 @@ class JellyfishState:
         md_path = os.path.join(self.active_project, "JELLYFISH_HISTORY.md")
         try:
             with open(md_path, "w", encoding="utf-8") as f:
-                f.write("# 🪼 Historial de Conversación — Jellyfish OS\n\n")
+                f.write("# [JELLYFISH] Historial de Conversación — Jellyfish OS\n\n")
                 f.write("Este archivo se actualiza automáticamente y registra las interacciones del asistente.\n\n")
                 f.write("---\n")
                 
                 if self.history_summary:
-                    f.write("### 🧠 Resumen de Contexto Acumulado (Memoria a Largo Plazo)\n")
+                    f.write("### [ORQUESTADOR] Resumen de Contexto Acumulado (Memoria a Largo Plazo)\n")
                     f.write(f"{self.history_summary}\n\n")
                     f.write("---\n")
 
@@ -747,20 +747,20 @@ class JellyfishState:
                     content = msg.get("content", "")
                     
                     if role == "SYSTEM":
-                        f.write(f"### ⚙️ Sistema\n```markdown\n{content}\n```\n\n")
+                        f.write(f"### [SISTEMA] Sistema\n```markdown\n{content}\n```\n\n")
                     elif role == "USER":
                         if content.startswith("[TERMINAL OUTPUT FOR:"):
                             parts = content.split("]\n", 1)
                             cmd = parts[0].replace("[TERMINAL OUTPUT FOR: ", "")
                             out = parts[1] if len(parts) > 1 else ""
-                            f.write(f"#### 💻 Ejecución de Comando: `{cmd}`\n")
+                            f.write(f"#### [DEV] Ejecución de Comando: `{cmd}`\n")
                             f.write(f"<details>\n<summary>Ver salida del terminal</summary>\n\n```\n{out}\n```\n\n</details>\n\n")
                         else:
-                            f.write(f"### 👤 Usuario\n{content}\n\n")
+                            f.write(f"### [USUARIO] Usuario\n{content}\n\n")
                     elif role == "ASSISTANT":
-                        f.write(f"### 🤖 Asistente (Jellyfish)\n{content}\n\n")
+                        f.write(f"### [IA] Asistente (Jellyfish)\n{content}\n\n")
                     else:
-                        f.write(f"### ❓ {role}\n{content}\n\n")
+                        f.write(f"### [PREGUNTA] {role}\n{content}\n\n")
                     f.write("---\n")
         except Exception as e:
             logger.warning("No se pudo escribir JELLYFISH_HISTORY.md: %s", e)

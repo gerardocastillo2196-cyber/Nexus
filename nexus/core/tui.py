@@ -113,7 +113,7 @@ class TUIEngine:
             try:
                 # Mostrar icono de Jellyfish y el nombre del agente activo en el prompt
                 active_agent = getattr(state, "active_agent", "default") if state else "default"
-                prompt_label = f"🐙 @{active_agent}> "
+                prompt_label = f"[AGENTE] @{active_agent}> "
                 with patch_stdout():
                     user_input = session.prompt(prompt_label)
                 user_input = user_input.strip()
@@ -132,7 +132,7 @@ class TUIEngine:
             except EOFError:
                 break
             except Exception as e:
-                print(f"\n❌ Error al ejecutar: {e}\n")
+                print(f"\n[ERROR] Error al ejecutar: {e}\n")
 
         return "/exit"
 
@@ -145,7 +145,7 @@ class TUIEngine:
         """Registra la finalización de una tarea en segundo plano."""
         status_text = "COMPLETADO" if success else "FALLIDO"
         tok_str = f" ({tokens:,} tokens)" if tokens else ""
-        self.append_log(f"[✓] {status_text}: @{agent or 'agente'} -> {task_id}{tok_str}\n\n")
+        self.append_log(f"[[OK]] {status_text}: @{agent or 'agente'} -> {task_id}{tok_str}\n\n")
         logger.info("Task %s terminada (%s)", task_id, status_text)
 
 

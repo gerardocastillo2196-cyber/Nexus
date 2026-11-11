@@ -56,7 +56,7 @@ class TaskExecutor:
             "developer": developer_agent,
             "attempt": attempt
         })
-        console.print(f"[cyan]       🔄 [Agent Swarm] Codigo enviado al pizarron para debate: @{developer_agent} -> @qa_engineer...[/cyan]")
+        console.print(f"[cyan]       [RECARGA] [Agent Swarm] Codigo enviado al pizarron para debate: @{developer_agent} -> @qa_engineer...[/cyan]")
 
         qa_prompt = (
             f"Eres @qa_engineer en el Enjambre Multi-Agente de Jellyfish OS.\n"
@@ -84,7 +84,7 @@ class TaskExecutor:
 
         if "[APPROVED]" in qa_response or "APPROVED" in qa_response[:50]:
             event_bus.publish(EventType.CODE_APPROVED, {"task_id": task_id_str, "reviewer": "qa_engineer"})
-            console.print("       [green]🤝 Consenso del Enjambre alcanzado: @qa_engineer aprobo la entrega.[/green]")
+            console.print("       [green][CONSENSO] Consenso del Enjambre alcanzado: @qa_engineer aprobo la entrega.[/green]")
             return True, "Consenso alcanzado entre @developer y @qa_engineer.", False
         
         debates_key = f"debate_cycles_{task_id_str}"
@@ -94,7 +94,7 @@ class TaskExecutor:
         
         if cycles >= max_debate_cycles:
             logger.warning("El Juez: Tarea %s bloqueada tras %d ciclos de debate sin consenso.", task_id_str, cycles)
-            console.print(f"       [red]⛔ Circuit Breaker (El Juez): Tarea {task_id_str} bloqueada por superar {max_debate_cycles} ciclos sin consenso.[/red]")
+            console.print(f"       [red][BLOQUEADO] Circuit Breaker (El Juez): Tarea {task_id_str} bloqueada por superar {max_debate_cycles} ciclos sin consenso.[/red]")
             event_bus.publish(EventType.CIRCUIT_BREAKER_TRIPPED, {
                 "task_id": task_id_str,
                 "cycles": cycles,
@@ -110,5 +110,5 @@ class TaskExecutor:
             
         event_bus.publish(EventType.CODE_REJECTED, {"task_id": task_id_str, "reviewer": "qa_engineer", "cycle": cycles})
         event_bus.publish(EventType.DEBATE_CYCLE_STARTED, {"task_id": task_id_str, "cycle": cycles + 1})
-        console.print(f"       [yellow]💬 [@qa_engineer rechazo (Ciclo {cycles}/{max_debate_cycles})]: {reason[:100]}...[/yellow]")
+        console.print(f"       [yellow][MENSAJE] [@qa_engineer rechazo (Ciclo {cycles}/{max_debate_cycles})]: {reason[:100]}...[/yellow]")
         return False, f"[DEBATE ENJAMBRE - CRITICA DE @qa_engineer (Ciclo {cycles}/{max_debate_cycles})]:\n{reason}", False

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import EscribaMarkdownRenderer from './EscribaMarkdownRenderer';
 
 export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
   const [activeTab, setActiveTab] = useState('character_debate'); // 'character_debate' | 'model_debate'
@@ -80,7 +81,7 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
         body: JSON.stringify({
           character_ids: selectedCharIds,
           scene_prompt: scenePrompt.trim(),
-          num_turns: 3
+          num_turns: 4
         })
       });
 
@@ -98,6 +99,88 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
     }
   };
 
+  // Helper para renderizar intervenciones de personajes como burbujas de diálogo
+  const renderCharacterDialogue = (dialogueText) => {
+    if (!dialogueText) return null;
+    const blocks = dialogueText.split(/\n\s*\n/).filter(b => b.trim().length > 0);
+    const parsedTurns = [];
+    const turnRegex = /^\*\*([^*]+)\*\*(?:\s*\(([^)]+)\))?:\s*([\s\S]*)$/;
+
+    for (const block of blocks) {
+      const match = block.trim().match(turnRegex);
+      if (match) {
+        parsedTurns.push({
+          speaker: match[1].trim(),
+          role: match[2]?.trim() || '',
+          speech: match[3]?.trim() || ''
+        });
+      }
+    }
+
+    if (parsedTurns.length >= 2) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {parsedTurns.map((turn, idx) => {
+            const isCharA = idx % 2 === 0;
+            return (
+              <div
+                key={idx}
+                style={{
+                  alignSelf: isCharA ? 'flex-start' : 'flex-end',
+                  maxWidth: '88%',
+                  display: 'flex',
+                  flexDirection: isCharA ? 'row' : 'row-reverse',
+                  gap: '12px',
+                  alignItems: 'flex-start'
+                }}
+              >
+                <div style={{
+                  width: '36px', height: '36px', borderRadius: '50%',
+                  background: isCharA ? 'linear-gradient(135deg, #3b82f6, #1d4ed8)' : 'linear-gradient(135deg, #ec4899, #be185d)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontWeight: 800, fontSize: '14px', color: '#fff', flexShrink: 0,
+                  boxShadow: isCharA ? '0 0 12px rgba(59, 130, 246, 0.4)' : '0 0 12px rgba(236, 72, 153, 0.4)'
+                }}>
+                  {turn.speaker.charAt(0).toUpperCase()}
+                </div>
+                <div style={{
+                  background: isCharA ? 'rgba(30, 41, 59, 0.85)' : 'rgba(45, 26, 60, 0.85)',
+                  border: isCharA ? '1px solid rgba(59, 130, 246, 0.35)' : '1px solid rgba(236, 72, 153, 0.35)',
+                  borderRadius: isCharA ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
+                  padding: '14px 18px',
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.25)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                    <span style={{ fontWeight: 700, fontSize: '13px', color: isCharA ? '#93c5fd' : '#f9a8d4' }}>
+                      {turn.speaker}
+                    </span>
+                    {turn.role && (
+                      <span style={{
+                        fontSize: '11px', padding: '2px 8px', borderRadius: '12px',
+                        background: 'rgba(255,255,255,0.08)', color: '#94a3b8'
+                      }}>
+                        {turn.role}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '13.5px', color: '#e2e8f0', lineHeight: 1.6 }}>
+                    <EscribaMarkdownRenderer content={turn.speech} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ fontSize: '13.5px', color: '#e2e8f0', lineHeight: 1.6 }}>
+        <EscribaMarkdownRenderer content={dialogueText} />
+      </div>
+    );
+  };
+
   return (
     <div className="view-container escriba-ensemble-container" style={{ padding: '24px', color: '#f8fafc', height: '100%', overflowY: 'auto' }}>
       {/* Header */}
@@ -109,7 +192,7 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
             </h1>
           </div>
           <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted, #94a3b8)', fontSize: '13px' }}>
-            Simulación de fricción entre personajes y debate cruzado entre modelos de IA.
+            Simulación dialéctica entre personajes y deliberación multi-modelo contrapuesta de IA.
           </p>
         </div>
       </div>
@@ -140,12 +223,12 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
 
       {/* TAB 1: CHARACTER DEBATE */}
       {activeTab === 'character_debate' && (
-        <div style={{ display: 'grid', gridTemplateColumns: charDebateResult ? '320px 1fr' : '1fr', gap: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: charDebateResult ? '360px 1fr' : '1fr', gap: '20px' }}>
           <div style={{ background: 'var(--surface-container, #0f172a)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div>
               <h3 style={{ margin: '0 0 6px 0', color: 'var(--text-primary, #fff)', fontSize: '15px' }}>1. Selecciona Personajes</h3>
               <p style={{ margin: 0, fontSize: '12px', color: 'var(--text-muted, #94a3b8)' }}>
-                Cada personaje actuará según su biografía, matriz de personalidad y alineación en el manuscrito.
+                Cada personaje actuará según su arquetipo, facción y protocolos narrativos.
               </p>
             </div>
 
@@ -154,7 +237,7 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
                 No se encontraron personajes en el proyecto activo.
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '10px' }}>
                 {characters.map(c => {
                   const isSelected = selectedCharIds.includes(c.id);
                   const attrs = c.attributes || {};
@@ -170,7 +253,7 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
                       }}
                     >
                       <span style={{ fontWeight: 700, fontSize: '13px', color: isSelected ? '#a5b4fc' : '#fff' }}>{c.label}</span>
-                      <span style={{ fontSize: '11px', color: '#94a3b8' }}>{attrs.archetype || 'Personaje'}</span>
+                      <span style={{ fontSize: '11px', color: '#94a3b8' }}>{attrs.archetype || attrs.faction || 'Personaje'}</span>
                     </div>
                   );
                 })}
@@ -178,7 +261,7 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
             )}
 
             <div style={{ marginTop: '8px' }}>
-              <h3 style={{ margin: '0 0 6px 0', color: '#fff', fontSize: '16px' }}>2. Situación de la Escena o Dilema</h3>
+              <h3 style={{ margin: '0 0 6px 0', color: '#fff', fontSize: '15px' }}>2. Situación de la Escena o Dilema</h3>
               <textarea
                 rows="4"
                 value={scenePrompt}
@@ -202,16 +285,21 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
 
           {/* Results Panel */}
           {charDebateResult && (
-            <div style={{ background: '#0b1329', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px' }}>
-                <span style={{ fontSize: '14px', fontWeight: 700, color: '#a5b4fc' }}>
-                  Diálogo de Escena: {charDebateResult.characters?.join(' vs ')}
-                </span>
-                <button onClick={() => setCharDebateResult(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>✕</button>
+            <div style={{ background: '#0b1329', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
+                <div>
+                  <span style={{ fontSize: '15px', fontWeight: 700, color: '#a5b4fc' }}>
+                    Diálogo de Escena: {charDebateResult.characters?.filter(Boolean).join(' vs ')}
+                  </span>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#94a3b8' }}>
+                    Dilema: &ldquo;{charDebateResult.dilemma || scenePrompt}&rdquo;
+                  </p>
+                </div>
+                <button onClick={() => setCharDebateResult(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '16px', fontWeight: 700 }}>X</button>
               </div>
 
-              <div style={{ fontSize: '13px', color: '#e2e8f0', lineHeight: 1.6, whitespace: 'pre-wrap', background: 'rgba(0,0,0,0.3)', padding: '16px', borderRadius: '8px' }}>
-                {charDebateResult.dialogue}
+              <div style={{ background: 'rgba(0,0,0,0.3)', padding: '16px', borderRadius: '10px' }}>
+                {renderCharacterDialogue(charDebateResult.dialogue || charDebateResult.debate_transcript)}
               </div>
             </div>
           )}
@@ -220,7 +308,7 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
 
       {/* TAB 2: MODEL DEBATE */}
       {activeTab === 'model_debate' && (
-        <div style={{ display: 'grid', gridTemplateColumns: debateResult ? '1fr 1fr' : '1fr', gap: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: debateResult ? '360px 1fr' : '1fr', gap: '20px' }}>
           <div style={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h3 style={{ margin: 0, color: '#fff', fontSize: '16px' }}>Dilema Narrativo o Escena a Debatir</h3>
             <p style={{ margin: 0, fontSize: '13px', color: '#94a3b8' }}>
@@ -240,20 +328,89 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
               onClick={handleRunModelDebate}
               style={{ padding: '12px', background: loadingModel ? '#475569' : '#6366f1', border: 'none', borderRadius: '8px', color: '#fff', fontWeight: 700, cursor: loadingModel ? 'not-allowed' : 'pointer' }}
             >
-              {loadingModel ? 'Sometiendo a Debate Multi-Modelo...' : 'Iniciar Debate Narrativo'}
+              {loadingModel ? 'Sometiendo a Deliberación Multi-Modelo...' : 'Iniciar Debate Narrativo'}
             </button>
           </div>
 
           {debateResult && (
-            <div style={{ background: '#0b1329', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px' }}>
-                <span style={{ fontSize: '14px', fontWeight: 700, color: '#a5b4fc' }}>Dictamen del Ensamble Narrativo</span>
-                <button onClick={() => setDebateResult(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>✕</button>
+            <div style={{ background: '#0b1329', border: '1px solid rgba(255,255,255,0.15)', borderRadius: '12px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '18px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
+                <div>
+                  <span style={{ fontSize: '16px', fontWeight: 700, color: '#a5b4fc' }}>Dictamen del Ensamble Narrativo</span>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#94a3b8' }}>
+                    Deliberación dialéctica contrapuesta con síntesis y recomendación de redacción
+                  </p>
+                </div>
+                <button onClick={() => setDebateResult(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '16px', fontWeight: 700 }}>X</button>
               </div>
 
-              <div style={{ fontSize: '13px', color: '#e2e8f0', lineHeight: 1.6, whitespace: 'pre-wrap' }}>
-                {debateResult.response || debateResult.analysis || 'Debate completado.'}
-              </div>
+              {debateResult.perspectives && debateResult.perspectives.length >= 2 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {/* Two perspective columns */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    {/* Perspective Alpha */}
+                    <div style={{
+                      background: 'rgba(30, 58, 138, 0.15)',
+                      border: '1px solid rgba(59, 130, 246, 0.4)',
+                      borderRadius: '10px',
+                      padding: '16px'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '13px', color: '#93c5fd', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          Perspectiva Alpha: {debateResult.perspectives[0].model_role || 'Modelo Alpha'}
+                        </span>
+                        <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(59, 130, 246, 0.2)', color: '#bfdbfe' }}>
+                          Temp {debateResult.perspectives[0].temperature || 0.3}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#e2e8f0', lineHeight: 1.6 }}>
+                        <EscribaMarkdownRenderer content={debateResult.perspectives[0].argument} />
+                      </div>
+                    </div>
+
+                    {/* Perspective Beta */}
+                    <div style={{
+                      background: 'rgba(112, 26, 117, 0.15)',
+                      border: '1px solid rgba(217, 70, 239, 0.4)',
+                      borderRadius: '10px',
+                      padding: '16px'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                        <span style={{ fontWeight: 700, fontSize: '13px', color: '#f5d0fe', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          Perspectiva Beta: {debateResult.perspectives[1].model_role || 'Modelo Beta'}
+                        </span>
+                        <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(217, 70, 239, 0.2)', color: '#f0abfc' }}>
+                          Temp {debateResult.perspectives[1].temperature || 0.8}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '13px', color: '#e2e8f0', lineHeight: 1.6 }}>
+                        <EscribaMarkdownRenderer content={debateResult.perspectives[1].argument} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Synthesis / Verdict Card */}
+                  <div style={{
+                    background: 'rgba(245, 158, 11, 0.08)',
+                    border: '1px solid rgba(245, 158, 11, 0.4)',
+                    borderRadius: '10px',
+                    padding: '18px'
+                  }}>
+                    <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontWeight: 700, fontSize: '14px', color: '#fbbf24' }}>
+                        Dictamen y Síntesis Literaria
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '13.5px', color: '#f8fafc', lineHeight: 1.65 }}>
+                      <EscribaMarkdownRenderer content={debateResult.synthesis || debateResult.response} />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: '13px', color: '#e2e8f0', lineHeight: 1.6, background: 'rgba(0,0,0,0.25)', padding: '16px', borderRadius: '8px' }}>
+                  <EscribaMarkdownRenderer content={debateResult.response || debateResult.analysis || 'Debate completado.'} />
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -261,3 +418,4 @@ export default function EscribaEnsembleView({ onNavigate, onSendMessage }) {
     </div>
   );
 }
+

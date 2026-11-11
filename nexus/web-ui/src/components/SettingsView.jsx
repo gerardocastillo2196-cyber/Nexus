@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import EscribaMarkdownRenderer from './EscribaMarkdownRenderer';
 
 const ALL_PROVIDERS = [
   { id: 'ollama', label: 'Ollama Local (GPU / CPU)', requiresKey: false, defaultUrl: 'http://localhost:11434/api/chat', defaultModel: 'qwen2.5-agent:latest' },
@@ -21,8 +23,17 @@ export default function SettingsView({ onStateRefresh, onNavigate }) {
   const [message, setMessage] = useState(null);
   const [activeTab, setActiveTab] = useState('providers');
 
+  // Estados de exploración y gestión de Skills
+  const [selectedAgency, setSelectedAgency] = useState('All');
+  const [ecosystemFilter, setEcosystemFilter] = useState('auto');
+  const [skillSearchQuery, setSkillSearchQuery] = useState('');
+  const [inspectingSkill, setInspectingSkill] = useState(null);
+  const [skillDetailContent, setSkillDetailContent] = useState('');
+  const [loadingSkillDetail, setLoadingSkillDetail] = useState(false);
+
   // Proveedor Global
   const [provider, setProvider] = useState('ollama');
+
   const [model, setModel] = useState('');
 
   // Enrutamiento Híbrido (Swarm Routing)
@@ -137,7 +148,7 @@ export default function SettingsView({ onStateRefresh, onNavigate }) {
         })
       });
       if (res.ok) {
-        setMessage({ type: 'success', text: '✓ Toda la configuración se guardó en .env y se aplicó al sistema' });
+        setMessage({ type: 'success', text: '[OK] Toda la configuración se guardó en .env y se aplicó al sistema' });
         await fetchConfig();
         onStateRefresh?.();
       } else {
@@ -171,7 +182,7 @@ export default function SettingsView({ onStateRefresh, onNavigate }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: `✓ Archivo de contexto ${action === 'add' ? 'agregado' : 'removido'}` });
+        setMessage({ type: 'success', text: `[OK] Archivo de contexto ${action === 'add' ? 'agregado' : 'removido'}` });
         if (action === 'add') setNewContextPath('');
         await fetchConfig();
         onStateRefresh?.();
@@ -183,12 +194,16 @@ export default function SettingsView({ onStateRefresh, onNavigate }) {
     }
   };
 
-  const handleToggleSkill = async (skillName, enabled) => {
+  const handleToggleSkill = async (skillIdentifier, enabled) => {
     try {
       const res = await fetch('/api/skills/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ skill_name: skillName, enabled })
+        body: JSON.stringify({
+          skill_name: skillIdentifier,
+          skill_id: skillIdentifier,
+          enabled
+        })
       });
       if (res.ok) {
         await fetchConfig();
@@ -198,6 +213,50 @@ export default function SettingsView({ onStateRefresh, onNavigate }) {
       setMessage({ type: 'error', text: 'Error al conmutar habilidad' });
     }
   };
+
+  const modalScrollRef = useRef(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && inspectingSkill) {
+        setInspectingSkill(null);
+      }
+    };
+    if (inspectingSkill) {
+      document.body.style.overflow = 'hidden';
+      window.addEventListener('keydown', handleKeyDown);
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [inspectingSkill]);
+
+  const handleInspectSkill = async (skill) => {
+    setInspectingSkill(skill);
+    setLoadingSkillDetail(true);
+    setSkillDetailContent('');
+    try {
+      const targetId = skill.skill_id || skill.id || skill.slug || skill.name;
+      const res = await fetch(`/api/skills/detail/${encodeURIComponent(targetId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSkillDetailContent(data.instructions || data.description || 'Sin instrucciones adicionales.');
+      } else {
+        setSkillDetailContent(skill.description || 'No se pudieron cargar las instrucciones.');
+      }
+    } catch (err) {
+      setSkillDetailContent(skill.description || 'Error al conectar con el servidor.');
+    } finally {
+      setLoadingSkillDetail(false);
+      if (modalScrollRef.current) {
+        modalScrollRef.current.scrollTop = 0;
+      }
+    }
+  };
+
 
   const isScrumActive = Boolean(config?.scrum_active);
   const isEscribaActive = Boolean(config?.escriba_active);
@@ -221,7 +280,7 @@ export default function SettingsView({ onStateRefresh, onNavigate }) {
             {saving ? 'Guardando...' : 'Guardar Todo'}
           </button>
           <button className="btn btn-secondary" onClick={() => onNavigate('chat')}>
-            ➔ Volver al Chat
+            Volver al Chat
           </button>
         </div>
       </div>
@@ -431,8 +490,8 @@ export default function SettingsView({ onStateRefresh, onNavigate }) {
                       </select>
                       <span className="form-hint" style={{ marginTop: '8px', display: 'block' }}>
                         {theme === 'liquid_glass' 
-                          ? '✨ Estilo Liquid Glass activo: Paneles de cristal translúcido, desenfoque de fondo y acentos cian/violeta.'
-                          : ' Estilo Predeterminado activo: Interfaz oscura limpia, rápida y de alto contraste.'}
+                          ? 'Estilo Liquid Glass activo: Paneles de cristal translúcido, desenfoque de fondo y acentos cian/violeta.'
+                          : 'Estilo Predeterminado activo: Interfaz oscura limpia, rápida y de alto contraste.'}
                       </span>
                     </div>
                   </div>
@@ -800,35 +859,574 @@ export default function SettingsView({ onStateRefresh, onNavigate }) {
             )}
 
             {/* TAB 5: HABILIDADES (SKILLS) */}
-            {activeTab === 'skills' && (
-              <div className="view-card full-width-card">
-                <h3>Habilidades (Skills) Registradas</h3>
-                {config?.available_skills?.length === 0 ? (
-                  <div className="empty-state-text" style={{ marginTop: '12px' }}>
-                    No hay habilidades registradas en este agente.
-                  </div>
-                ) : (
-                  <div className="skills-grid" style={{ marginTop: '16px' }}>
-                    {config?.available_skills?.map((skill) => (
-                      <div key={skill.name} className="skill-card">
-                        <div className="skill-info">
-                          <span className="skill-name">{skill.name}</span>
-                          <span className="skill-desc">{skill.description || 'Sin descripción'}</span>
-                        </div>
-                        <label className="switch-toggle">
-                          <input 
-                            type="checkbox"
-                            checked={skill.enabled}
-                            onChange={(e) => handleToggleSkill(skill.name, e.target.checked)}
-                          />
-                          <span className="slider round" />
-                        </label>
+            {activeTab === 'skills' && (() => {
+              const allSkills = config?.available_skills || [];
+              const isEscriba = Boolean(config?.escriba_active);
+              const isScrum = Boolean(config?.scrum_active) && !isEscriba;
+              const activeEngine = isEscriba ? 'escriba' : (isScrum ? 'jellyfish' : 'nexus');
+              const currentEcosystem = ecosystemFilter === 'auto' ? activeEngine : ecosystemFilter;
+
+              const matchEcosystem = (skill, eco) => {
+                if (eco === 'all') return true;
+                const sEco = (skill.ecosystem || '').toLowerCase();
+                const agency = skill.agency || '';
+                if (eco === 'escriba') {
+                  return sEco === 'escriba' || agency === 'Creative';
+                }
+                if (eco === 'jellyfish') {
+                  // Jellyfish tiene acceso a sus propias habilidades de ingeniería Y a las de Nexus (Research, Legal & Media, Marketing)
+                  return sEco === 'jellyfish' || sEco === 'nexus' || agency !== 'Creative';
+                }
+                if (eco === 'nexus') {
+                  return sEco === 'nexus' || ['Research', 'Legal & Media', 'Marketing'].includes(agency);
+                }
+                return true;
+              };
+
+              // Skills filtradas por ecosistema (Escriba / Jellyfish / Nexus)
+              const ecosystemSkills = allSkills.filter(s => matchEcosystem(s, currentEcosystem));
+              
+              // Agencias presentes en este ecosistema específico
+              const ecosystemAgencies = ['All', ...Array.from(new Set(ecosystemSkills.map(s => s.agency || 'Default'))).sort()];
+
+              // Filtrado final con búsqueda y agencia
+              const filteredSkills = ecosystemSkills.filter(skill => {
+                const matchesAgency = selectedAgency === 'All' || skill.agency === selectedAgency;
+                const matchesSearch = !skillSearchQuery.trim() || (
+                  skill.name.toLowerCase().includes(skillSearchQuery.toLowerCase()) ||
+                  (skill.description && skill.description.toLowerCase().includes(skillSearchQuery.toLowerCase())) ||
+                  (skill.role && skill.role.toLowerCase().includes(skillSearchQuery.toLowerCase())) ||
+                  (skill.keywords && skill.keywords.some(k => k.toLowerCase().includes(skillSearchQuery.toLowerCase())))
+                );
+                return matchesAgency && matchesSearch;
+              });
+
+              const activeCount = ecosystemSkills.filter(s => s.enabled).length;
+
+              const getAgencyColor = (agency) => {
+                const map = {
+                  'Creative': '#818cf8',
+                  'Development': '#38bdf8',
+                  'DevOps': '#fb923c',
+                  'Frontend': '#34d399',
+                  'Legal & Media': '#f472b6',
+                  'Management': '#60a5fa',
+                  'Marketing': '#f87171',
+                  'Research': '#2dd4bf'
+                };
+                return map[agency] || '#a78bfa';
+              };
+
+              // Counts por ecosistema para los botones superiores
+              const escribaCount = allSkills.filter(s => matchEcosystem(s, 'escriba')).length;
+              const jellyfishCount = allSkills.filter(s => matchEcosystem(s, 'jellyfish')).length;
+              const nexusCount = allSkills.filter(s => matchEcosystem(s, 'nexus')).length;
+
+              return (
+                <div className="view-card full-width-card" style={{ background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '16px', padding: '24px' }}>
+                  {/* Header & Stats */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '18px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', paddingBottom: '16px' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#f8fafc' }}>
+                          Catálogo de Habilidades (Skills) Especializadas
+                        </h3>
+                        <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', fontWeight: 700 }}>
+                          {ecosystemSkills.length} en este modo ({allSkills.length} total)
+                        </span>
+                        <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '12px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontWeight: 700 }}>
+                          {activeCount} activas
+                        </span>
                       </div>
-                    ))}
+                      <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#94a3b8' }}>
+                        Inyección selectiva de metodologías, anti-patrones y ejecución programática según el motor activo.
+                      </p>
+                    </div>
+
+                    {/* Search Bar */}
+                    <div style={{ minWidth: '260px' }}>
+                      <input
+                        type="text"
+                        placeholder="Buscar por nombre, rol o keyword..."
+                        value={skillSearchQuery}
+                        onChange={(e) => setSkillSearchQuery(e.target.value)}
+                        style={{
+                          width: '100%', padding: '8px 14px', borderRadius: '8px',
+                          background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.15)',
+                          color: '#fff', fontSize: '13px', outline: 'none'
+                        }}
+                      />
+                    </div>
                   </div>
-                )}
-              </div>
-            )}
+
+                  {/* Banner de Filtrado por Ecosistema (Modo Activo) */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    padding: '12px 18px',
+                    borderRadius: '12px',
+                    background: currentEcosystem === 'escriba'
+                      ? 'rgba(249, 115, 22, 0.10)'
+                      : currentEcosystem === 'jellyfish'
+                        ? 'rgba(56, 189, 248, 0.10)'
+                        : 'rgba(168, 85, 247, 0.10)',
+                    border: currentEcosystem === 'escriba'
+                      ? '1px solid rgba(249, 115, 22, 0.25)'
+                      : currentEcosystem === 'jellyfish'
+                        ? '1px solid rgba(56, 189, 248, 0.25)'
+                        : '1px solid rgba(168, 85, 247, 0.25)',
+                    marginBottom: '20px'
+                  }}>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 700, color: '#f8fafc' }}>
+                        {currentEcosystem === 'escriba'
+                          ? 'Ecosistema Activo: ESCRIBA (Motor Narrativo)'
+                          : currentEcosystem === 'jellyfish'
+                            ? 'Ecosistema Activo: JELLYFISH (Motor Ágil / Scrum)'
+                            : currentEcosystem === 'all'
+                              ? 'Catálogo Completo (Todos los Ecosistemas)'
+                              : 'Ecosistema Activo: NEXUS (Conversacional Neutral)'}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                        {currentEcosystem === 'escriba'
+                          ? 'Viendo habilidades de creación literaria, arquetipos y simulación de tramas.'
+                          : currentEcosystem === 'jellyfish'
+                            ? 'Viendo habilidades de ingeniería (Dev, DevOps, Frontend, Scrum) y de soporte estratégico/técnico de Nexus.'
+                            : currentEcosystem === 'all'
+                              ? 'Viendo todas las habilidades registradas en el sistema sin filtros de motor.'
+                              : 'Viendo habilidades de investigación, análisis legal y marketing.'}
+                      </div>
+                    </div>
+
+                    {/* Botones de conmutación de ecosistema */}
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => { setEcosystemFilter('auto'); setSelectedAgency('All'); }}
+                        style={{
+                          padding: '5px 12px', borderRadius: '8px', border: ecosystemFilter === 'auto' ? '1px solid #3b82f6' : '1px solid rgba(255,255,255,0.1)',
+                          background: ecosystemFilter === 'auto' ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255,255,255,0.03)',
+                          color: ecosystemFilter === 'auto' ? '#93c5fd' : '#cbd5e1', fontSize: '11px', fontWeight: 700, cursor: 'pointer'
+                        }}
+                      >
+                        Modo Activo ({activeEngine.toUpperCase()})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setEcosystemFilter('escriba'); setSelectedAgency('All'); }}
+                        style={{
+                          padding: '5px 12px', borderRadius: '8px', border: ecosystemFilter === 'escriba' ? '1px solid #f97316' : '1px solid rgba(255,255,255,0.1)',
+                          background: ecosystemFilter === 'escriba' ? 'rgba(249, 115, 22, 0.3)' : 'rgba(255,255,255,0.03)',
+                          color: ecosystemFilter === 'escriba' ? '#fdba74' : '#cbd5e1', fontSize: '11px', fontWeight: 600, cursor: 'pointer'
+                        }}
+                      >
+                        ESCRIBA ({escribaCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setEcosystemFilter('jellyfish'); setSelectedAgency('All'); }}
+                        style={{
+                          padding: '5px 12px', borderRadius: '8px', border: ecosystemFilter === 'jellyfish' ? '1px solid #38bdf8' : '1px solid rgba(255,255,255,0.1)',
+                          background: ecosystemFilter === 'jellyfish' ? 'rgba(56, 189, 248, 0.3)' : 'rgba(255,255,255,0.03)',
+                          color: ecosystemFilter === 'jellyfish' ? '#7dd3fc' : '#cbd5e1', fontSize: '11px', fontWeight: 600, cursor: 'pointer'
+                        }}
+                      >
+                        JELLYFISH ({jellyfishCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setEcosystemFilter('nexus'); setSelectedAgency('All'); }}
+                        style={{
+                          padding: '5px 12px', borderRadius: '8px', border: ecosystemFilter === 'nexus' ? '1px solid #c084fc' : '1px solid rgba(255,255,255,0.1)',
+                          background: ecosystemFilter === 'nexus' ? 'rgba(192, 132, 252, 0.3)' : 'rgba(255,255,255,0.03)',
+                          color: ecosystemFilter === 'nexus' ? '#e9d5ff' : '#cbd5e1', fontSize: '11px', fontWeight: 600, cursor: 'pointer'
+                        }}
+                      >
+                        NEXUS ({nexusCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setEcosystemFilter('all'); setSelectedAgency('All'); }}
+                        style={{
+                          padding: '5px 12px', borderRadius: '8px', border: ecosystemFilter === 'all' ? '1px solid #a3e635' : '1px solid rgba(255,255,255,0.1)',
+                          background: ecosystemFilter === 'all' ? 'rgba(163, 230, 53, 0.25)' : 'rgba(255,255,255,0.03)',
+                          color: ecosystemFilter === 'all' ? '#d9f99d' : '#cbd5e1', fontSize: '11px', fontWeight: 600, cursor: 'pointer'
+                        }}
+                      >
+                        Todas ({allSkills.length})
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Agency Filter Pills */}
+                  <div style={{ marginBottom: '20px' }}>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginBottom: '8px', fontWeight: 700 }}>
+                      Filtrar por Agencia ({ecosystemAgencies.length > 1 ? ecosystemAgencies.length - 1 : 1} disponibles):
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      {ecosystemAgencies.map(agency => {
+                        const count = agency === 'All' ? ecosystemSkills.length : ecosystemSkills.filter(s => s.agency === agency).length;
+                        const isSelected = selectedAgency === agency;
+                        return (
+                          <button
+                            key={agency}
+                            type="button"
+                            onClick={() => setSelectedAgency(agency)}
+                            style={{
+                              padding: '6px 14px', borderRadius: '20px', border: isSelected ? '1px solid #3b82f6' : '1px solid rgba(255,255,255,0.08)',
+                              background: isSelected ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255,255,255,0.03)',
+                              color: isSelected ? '#93c5fd' : '#94a3b8',
+                              fontSize: '12px', fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s ease',
+                              display: 'flex', alignItems: 'center', gap: '6px'
+                            }}
+                          >
+                            <span>{agency === 'All' ? `Todas (${ecosystemSkills.length} skills)` : agency}</span>
+                            <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '10px', background: 'rgba(0,0,0,0.3)', color: '#e2e8f0' }}>
+                              {count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Skills Grid */}
+                  {filteredSkills.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '40px 16px', color: '#94a3b8', background: 'rgba(0,0,0,0.2)', borderRadius: '12px' }}>
+                      No se encontraron habilidades que coincidan con los criterios de búsqueda.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
+                      {filteredSkills.map((skill) => {
+                        const agencyColor = getAgencyColor(skill.agency);
+                        const targetId = skill.skill_id || skill.slug || skill.name;
+                        return (
+                          <div
+                            key={skill.name}
+                            style={{
+                              background: skill.enabled ? 'rgba(30, 41, 59, 0.5)' : 'rgba(15, 23, 42, 0.4)',
+                              border: skill.enabled ? `1px solid ${agencyColor}44` : '1px solid rgba(255,255,255,0.06)',
+                              borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column',
+                              justifyContent: 'space-between', gap: '12px', transition: 'all 0.2s ease'
+                            }}
+                          >
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
+                                <div>
+                                  <span style={{
+                                    fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em',
+                                    color: agencyColor, padding: '2px 8px', borderRadius: '6px', background: `${agencyColor}15`,
+                                    border: `1px solid ${agencyColor}30`, display: 'inline-block', marginBottom: '4px'
+                                  }}>
+                                    {skill.agency || 'General'}
+                                  </span>
+                                  <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#f8fafc' }}>
+                                    {skill.name}
+                                  </h4>
+                                </div>
+                                
+                                <label className="switch-toggle" style={{ margin: 0 }}>
+                                  <input 
+                                    type="checkbox"
+                                    checked={skill.enabled}
+                                    onChange={(e) => handleToggleSkill(targetId, e.target.checked)}
+                                  />
+                                  <span className="slider round" />
+                                </label>
+                              </div>
+
+                              {skill.role && (
+                                <div style={{ marginBottom: '8px' }}>
+                                  <span style={{ fontSize: '11px', color: '#93c5fd', background: 'rgba(59, 130, 246, 0.1)', padding: '2px 6px', borderRadius: '4px' }}>
+                                    Rol: {skill.role}
+                                  </span>
+                                </div>
+                              )}
+
+                              <p style={{ margin: '0 0 10px 0', fontSize: '12.5px', color: '#cbd5e1', lineHeight: 1.45 }}>
+                                {skill.description || 'Habilidad con directrices de razonamiento e inyección contextual.'}
+                              </p>
+
+                              {/* Keywords chips */}
+                              {skill.keywords && skill.keywords.length > 0 && (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                  {skill.keywords.slice(0, 4).map((kw, i) => (
+                                    <span key={i} style={{ fontSize: '10.5px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(255,255,255,0.04)', color: '#94a3b8' }}>
+                                      #{kw}
+                                    </span>
+                                  ))}
+                                  {skill.keywords.length > 4 && (
+                                    <span style={{ fontSize: '10px', color: '#64748b', alignSelf: 'center' }}>
+                                      +{skill.keywords.length - 4} más
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Card Footer */}
+                            <div style={{
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '10px', marginTop: '4px'
+                            }}>
+                              <span style={{
+                                fontSize: '11px',
+                                color: skill.enabled ? '#4ade80' : '#64748b',
+                                fontWeight: 600,
+                                display: 'flex', alignItems: 'center', gap: '6px'
+                              }}>
+                                <span style={{
+                                  width: '6px', height: '6px', borderRadius: '50%',
+                                  background: skill.enabled ? '#4ade80' : '#475569',
+                                  display: 'inline-block'
+                                }} />
+                                {skill.enabled ? 'Activa en Prompt' : 'En reposo'}
+                              </span>
+                              <button
+                                onClick={() => handleInspectSkill(skill)}
+                                style={{
+                                  padding: '5px 12px', borderRadius: '6px',
+                                  background: 'rgba(59, 130, 246, 0.08)',
+                                  border: '1px solid rgba(59, 130, 246, 0.2)',
+                                  color: '#93c5fd', fontSize: '11px', fontWeight: 600,
+                                  cursor: 'pointer', transition: 'all 0.15s ease',
+                                  letterSpacing: '0.01em'
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.18)'; e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.08)'; e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.2)'; }}
+                              >
+                                Ver Directrices
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Modal de Inspección de Directrices con React Portal para centrado absoluto en viewport */}
+                  {inspectingSkill && typeof document !== 'undefined' && createPortal(
+                    <div
+                      style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        width: '100vw',
+                        height: '100vh',
+                        backgroundColor: 'rgba(5, 8, 18, 0.82)',
+                        backdropFilter: 'blur(16px)',
+                        WebkitBackdropFilter: 'blur(16px)',
+                        zIndex: 999999,
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        padding: '20px',
+                        boxSizing: 'border-box'
+                      }}
+                      onClick={() => setInspectingSkill(null)}
+                    >
+                      <div
+                        style={{
+                          background: 'linear-gradient(180deg, #131d31 0%, #0a0f1d 100%)',
+                          border: '1px solid rgba(255, 255, 255, 0.12)',
+                          borderRadius: '16px',
+                          width: '100%',
+                          maxWidth: '820px',
+                          maxHeight: '86vh',
+                          height: '78vh',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          boxShadow: '0 32px 80px -16px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255,255,255,0.06) inset',
+                          overflow: 'hidden'
+                        }}
+                        onClick={e => e.stopPropagation()}
+                      >
+                        {/* Modal Header Compacto y Elegante */}
+                        <div style={{
+                          padding: '16px 24px',
+                          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          flexShrink: 0
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                            <span style={{
+                              fontSize: '10.5px',
+                              fontWeight: 700,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.05em',
+                              padding: '3px 10px',
+                              borderRadius: '6px',
+                              background: `${getAgencyColor(inspectingSkill.agency)}18`,
+                              color: getAgencyColor(inspectingSkill.agency),
+                              border: `1px solid ${getAgencyColor(inspectingSkill.agency)}35`
+                            }}>
+                              {inspectingSkill.agency}
+                            </span>
+                            <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700, color: '#f8fafc' }}>
+                              {inspectingSkill.name}
+                            </h3>
+                            <span style={{
+                              fontSize: '10.5px',
+                              fontWeight: 600,
+                              padding: '2px 8px',
+                              borderRadius: '5px',
+                              background: 'rgba(59, 130, 246, 0.12)',
+                              color: '#93c5fd',
+                              border: '1px solid rgba(59, 130, 246, 0.22)'
+                            }}>
+                              {inspectingSkill.role || '@default'}
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={() => setInspectingSkill(null)}
+                            style={{
+                              background: 'rgba(255,255,255,0.06)',
+                              border: '1px solid rgba(255,255,255,0.12)',
+                              borderRadius: '8px',
+                              color: '#94a3b8',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              padding: '6px 14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              transition: 'all 0.15s ease',
+                              flexShrink: 0
+                            }}
+                            onMouseEnter={e => {
+                              e.currentTarget.style.background = 'rgba(239, 68, 68, 0.18)';
+                              e.currentTarget.style.color = '#fca5a5';
+                              e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+                            }}
+                            onMouseLeave={e => {
+                              e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                              e.currentTarget.style.color = '#94a3b8';
+                              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)';
+                            }}
+                          >
+                            Cerrar
+                          </button>
+                        </div>
+
+                        {/* Keywords Subbar */}
+                        {inspectingSkill.keywords && inspectingSkill.keywords.length > 0 && (
+                          <div style={{
+                            padding: '8px 24px',
+                            background: 'rgba(0, 0, 0, 0.25)',
+                            borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            flexWrap: 'wrap',
+                            flexShrink: 0
+                          }}>
+                            <span style={{ fontSize: '10.5px', color: '#64748b', fontWeight: 600 }}>Keywords:</span>
+                            {inspectingSkill.keywords.map((kw, i) => (
+                              <span key={i} style={{
+                                fontSize: '10.5px',
+                                padding: '1px 7px',
+                                borderRadius: '4px',
+                                background: 'rgba(255,255,255,0.04)',
+                                border: '1px solid rgba(255,255,255,0.06)',
+                                color: '#94a3b8'
+                              }}>
+                                #{kw}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Modal Body — Markdown Content con Scroll Autocontenido */}
+                        <div
+                          ref={modalScrollRef}
+                          style={{
+                            padding: '24px 28px',
+                            overflowY: 'auto',
+                            flex: 1,
+                            fontSize: '13.5px',
+                            lineHeight: 1.65,
+                            color: '#e2e8f0'
+                          }}
+                        >
+                          {loadingSkillDetail ? (
+                            <div style={{
+                              textAlign: 'center',
+                              padding: '50px 16px',
+                              color: '#64748b',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '12px'
+                            }}>
+                              <div style={{
+                                width: '26px',
+                                height: '26px',
+                                borderRadius: '50%',
+                                border: '2px solid rgba(255,255,255,0.1)',
+                                borderTopColor: '#3b82f6',
+                                animation: 'spin 0.8s linear infinite'
+                              }} />
+                              <span>Cargando directrices de razonamiento...</span>
+                            </div>
+                          ) : skillDetailContent ? (
+                            <EscribaMarkdownRenderer content={skillDetailContent} />
+                          ) : (
+                            <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                              Esta habilidad no tiene directrices documentadas.
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Modal Footer */}
+                        <div style={{
+                          padding: '12px 24px',
+                          borderTop: '1px solid rgba(255,255,255,0.06)',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          background: 'rgba(0,0,0,0.25)',
+                          flexShrink: 0
+                        }}>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>
+                            Identificador: {inspectingSkill.skill_id || inspectingSkill.id || inspectingSkill.slug}
+                          </span>
+                          <button
+                            onClick={() => setInspectingSkill(null)}
+                            style={{
+                              padding: '6px 18px',
+                              borderRadius: '7px',
+                              background: 'rgba(59, 130, 246, 0.15)',
+                              border: '1px solid rgba(59, 130, 246, 0.3)',
+                              color: '#93c5fd',
+                              fontSize: '11.5px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                              flexShrink: 0
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.28)'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.15)'; }}
+                          >
+                            Entendido
+                          </button>
+                        </div>
+                      </div>
+                    </div>,
+                    document.body
+                  )}
+                </div>
+              );
+            })()}
+
           </div>
         )}
       </div>

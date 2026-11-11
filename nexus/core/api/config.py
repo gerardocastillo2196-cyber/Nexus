@@ -22,7 +22,9 @@ class ConfigUpdateRequest(BaseModel):
 
 
 class SkillsToggleRequest(BaseModel):
-    skill_path: str
+    skill_path: Optional[str] = None
+    skill_id: Optional[str] = None
+    skill_name: Optional[str] = None
     enabled: bool
 
 
@@ -37,9 +39,45 @@ class ContextFileRequest(BaseModel):
 
 @router.get("/config")
 async def get_config():
-    """Retorna la configuración actual del modelo, proveedor, tema visual y contexto."""
+    """Retorna la configuración actual del modelo, proveedor, tema visual, contexto y habilidades."""
     state = get_state()
     from core.config import PROVIDER_CONFIGS, supported_provider_names
+    from core.skills.registry import SkillRegistry
+    from core.state import AGENCY_DIR
+
+    skills_dir = os.path.join(AGENCY_DIR, "skills")
+    if not SkillRegistry._scanned:
+        SkillRegistry.scan(skills_dir)
+
+    available_skills = []
+    for name, skill_cls in SkillRegistry.list_skills().items():
+        try:
+            info = SkillRegistry.get_skill_info(skill_cls)
+            filepath = info["filepath"]
+            skill_id = info["id"]
+            slug = info["slug"]
+            is_active = (
+                filepath in state.active_skills
+                or skill_id in state.active_skills
+                or slug in state.active_skills
+                or info["name"].lower() in [s.lower() for s in state.active_skills]
+            )
+            available_skills.append({
+                "name": info["name"],
+                "skill_id": skill_id,
+                "slug": slug,
+                "agency": info["agency"],
+                "ecosystem": info.get("ecosystem", "nexus"),
+                "role": info["role"],
+                "description": info["description"],
+                "keywords": info["keywords"],
+                "has_execution": info["has_execution"],
+                "enabled": is_active,
+                "path": filepath
+            })
+        except Exception:
+            pass
+
     current_theme = getattr(state, "theme", "liquid_glass" if getattr(state, "escriba_active", False) else "default")
     return {
         "provider": state.provider,
@@ -47,6 +85,7 @@ async def get_config():
         "ollama_base_url": state.ollama_base_url,
         "available_providers": supported_provider_names(),
         "provider_configs": PROVIDER_CONFIGS,
+        "available_skills": available_skills,
         "active_skills": list(state.active_skills),
         "context_files": list(state.context_files),
         "scrum_active": getattr(state, "scrum_active", False),
@@ -54,6 +93,7 @@ async def get_config():
         "theme": current_theme,
         "liquid_glass_enabled": current_theme == "liquid_glass"
     }
+
 
 
 @router.post("/config")
@@ -114,46 +154,171 @@ async def update_config(req: ConfigUpdateRequest):
 
 @router.get("/skills")
 async def get_skills():
-    """Retorna la lista de todas las habilidades instaladas y su estado activo."""
+    """Retorna la lista de todas las habilidades registradas con metadatos estructurados."""
     state = get_state()
     from core.skills.registry import SkillRegistry
+    from core.state import AGENCY_DIR
+
+    skills_dir = os.path.join(AGENCY_DIR, "skills")
+    if not SkillRegistry._scanned:
+        SkillRegistry.scan(skills_dir)
+
     skills_data = []
+    canonical = SkillRegistry.list_skills()
 
+    for name, skill_cls in canonical.items():
+        try:
+            info = SkillRegistry.get_skill_info(skill_cls)
+            filepath = info["filepath"]
+            skill_id = info["id"]
+            slug = info["slug"]
+
+            is_active = (
+                filepath in state.active_skills
+                or skill_id in state.active_skills
+                or slug in state.active_skills
+                or info["name"].lower() in [s.lower() for s in state.active_skills]
+            )
+
+            rel_path = os.path.relpath(filepath, skills_dir) if filepath and os.path.exists(filepath) else f"{info['agency'].lower()}/{slug}.py"
+
+            skills_data.append({
+                "id": skill_id,
+                "slug": slug,
+                "name": info["name"],
+                "agency": info["agency"],
+                "role": info["role"],
+                "keywords": info["keywords"],
+                "description": info["description"],
+                "has_execution": info["has_execution"],
+                "path": filepath or rel_path,
+                "rel_path": rel_path,
+                "active": is_active
+            })
+        except Exception as err:
+            logger.warning("Error serializando skill %s: %s", name, err)
+
+    return {"skills": skills_data, "total": len(skills_data)}
+
+
+@router.get("/skills/catalog")
+async def get_skills_catalog():
+    """Retorna el catálogo completo de habilidades organizado por agencia con estadísticas."""
+    state = get_state()
+    from core.skills.registry import SkillRegistry
+    from core.state import AGENCY_DIR
+    from collections import defaultdict
+
+    skills_dir = os.path.join(AGENCY_DIR, "skills")
+    if not SkillRegistry._scanned:
+        SkillRegistry.scan(skills_dir)
+
+    canonical = SkillRegistry.list_skills()
+    agencies_dict = defaultdict(list)
+    all_skills = []
+
+    for name, skill_cls in canonical.items():
+        try:
+            info = SkillRegistry.get_skill_info(skill_cls)
+            filepath = info["filepath"]
+            skill_id = info["id"]
+            slug = info["slug"]
+
+            is_active = (
+                filepath in state.active_skills
+                or skill_id in state.active_skills
+                or slug in state.active_skills
+                or info["name"].lower() in [s.lower() for s in state.active_skills]
+            )
+
+            skill_item = {
+                "id": skill_id,
+                "slug": slug,
+                "name": info["name"],
+                "agency": info["agency"],
+                "ecosystem": info.get("ecosystem", "nexus"),
+                "role": info["role"],
+                "keywords": info["keywords"],
+                "description": info["description"],
+                "has_execution": info["has_execution"],
+                "path": filepath,
+                "active": is_active
+            }
+            agencies_dict[info["agency"]].append(skill_item)
+            all_skills.append(skill_item)
+        except Exception as err:
+            logger.warning("Error en catálogo para skill %s: %s", name, err)
+
+    sorted_agencies = sorted(agencies_dict.keys())
+    return {
+        "status": "ok",
+        "total_skills": len(all_skills),
+        "agencies": sorted_agencies,
+        "skills_by_agency": {ag: agencies_dict[ag] for ag in sorted_agencies},
+        "skills": all_skills
+    }
+
+
+@router.get("/skills/detail/{skill_id:path}")
+async def get_skill_detail(skill_id: str):
+    """Retorna los detalles completos y las instrucciones de una habilidad específica."""
+    from core.skills.registry import SkillRegistry
+    inst = SkillRegistry.get(skill_id)
+    if not inst:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' no encontrada en el registro.")
+
+    info = SkillRegistry.get_skill_info(inst)
+    instructions = ""
     try:
-        from core.state import AGENCY_DIR
-        skills_dir = os.path.join(AGENCY_DIR, "skills")
-        if os.path.exists(skills_dir):
-            for root, _, files in os.walk(skills_dir):
-                for f in sorted(files):
-                    if f.endswith(".md") or f.endswith(".py"):
-                        full_path = os.path.join(root, f)
-                        rel_path = os.path.relpath(full_path, skills_dir)
-                        skills_data.append({
-                            "name": rel_path,
-                            "path": full_path,
-                            "active": full_path in state.active_skills
-                        })
+        instructions = inst.get_instructions()
     except Exception as e:
-        logger.warning("Error al listar habilidades: %s", e)
+        instructions = f"Error al generar instrucciones: {e}"
 
-    return {"skills": skills_data}
+    return {
+        "status": "ok",
+        **info,
+        "instructions": instructions
+    }
 
 
 @router.post("/skills/toggle")
 async def toggle_skill(req: SkillsToggleRequest):
-    """Activa o desactiva una habilidad específica."""
+    """Activa o desactiva una habilidad específica de forma normalizada."""
     state = get_state()
-    path = req.skill_path
+    from core.skills.registry import SkillRegistry
+
+    target_key = req.skill_id or req.skill_name or req.skill_path or ""
+    if not target_key:
+        raise HTTPException(status_code=400, detail="Debe proveer skill_id, skill_name o skill_path.")
+
+    inst = SkillRegistry.get(target_key)
+    canonical_id = f"{inst.agency.lower()}:{inst._slug}" if inst and hasattr(inst, "_slug") else target_key
+    filepath = getattr(inst, "_filepath", "") if inst else req.skill_path
 
     if req.enabled:
-        if path not in state.active_skills:
-            state.active_skills.add(path)
+        state.active_skills.add(canonical_id)
+        if filepath:
+            state.active_skills.add(filepath)
     else:
-        if path in state.active_skills:
-            state.active_skills.remove(path)
+        # Remover todas las variantes para evitar estados zombies
+        state.active_skills.discard(canonical_id)
+        if filepath:
+            state.active_skills.discard(filepath)
+        state.active_skills.discard(target_key)
+        if inst:
+            state.active_skills.discard(inst.name)
+            state.active_skills.discard(inst.name.lower())
+            state.active_skills.discard(getattr(inst, "_slug", ""))
 
     state.refresh_static_context()
-    return {"status": "ok", "skill": path, "enabled": req.enabled}
+    return {
+        "status": "ok",
+        "skill": canonical_id,
+        "name": inst.name if inst else canonical_id,
+        "enabled": req.enabled,
+        "active_count": len(state.active_skills)
+    }
+
 
 
 @router.post("/tools/toggle")

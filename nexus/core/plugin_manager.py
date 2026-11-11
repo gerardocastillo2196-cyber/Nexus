@@ -197,7 +197,7 @@ class PluginManager:
                         signal.signal(signal.SIGALRM, old_handler)
             except Exception as em_err:
                 logger.error("Error al ejecutar módulo del plugin '%s': %s", plugin_name, em_err)
-                console.print(f"[dim red]❌ Error al ejecutar código de plugin '{plugin_name}': {em_err}[/dim red]")
+                console.print(f"[dim red][ERROR] Error al ejecutar código de plugin '{plugin_name}': {em_err}[/dim red]")
                 return
 
             # Comprobar si exporta una clase PluginInterface
@@ -223,7 +223,7 @@ class PluginManager:
                     logger.info("Plugin clase cargado (legado): %s", plugin_name)
                 except Exception as inst_err:
                     logger.error("Error inicializando clase de plugin '%s': %s", plugin_name, inst_err)
-                    console.print(f"[dim red]⚠️ Falló inicialización de plugin '{plugin_name}': {inst_err}[/dim red]")
+                    console.print(f"[dim red][ADVERTENCIA] Falló inicialización de plugin '{plugin_name}': {inst_err}[/dim red]")
             elif hasattr(module, "execute") and callable(module.execute):
                 self.plugins[plugin_name] = module
                 logger.info("Plugin función cargado (legado): %s", plugin_name)
@@ -260,7 +260,7 @@ class PluginManager:
         if plugin_name == "reload":
             self.load_all_plugins()
             discovered = ", ".join(self._plugin_files.keys()) or "ninguno"
-            return f"✓ Plugins recargados: {discovered}"
+            return f"[OK] Plugins recargados: {discovered}"
 
         # Auto-redescubrir si no está registrado
         if plugin_name not in self._plugin_files:
@@ -309,21 +309,21 @@ class PluginManager:
                 if stderr:
                     logger.error("Plugin sandbox stderr: %s", stderr)
                     if "traceback" in stderr.lower():
-                        return f"⚠ Plugin '{plugin_name}' falló con un error interno en el proceso secundario (traceback ocultado)."
-                    return f"⚠ Plugin '{plugin_name}' no produjo output. stderr: {stderr[:200]}"
-                return f"⚠ Plugin '{plugin_name}' no produjo output."
+                        return f"[ADVERTENCIA] Plugin '{plugin_name}' falló con un error interno en el proceso secundario (traceback ocultado)."
+                    return f"[ADVERTENCIA] Plugin '{plugin_name}' no produjo output. stderr: {stderr[:200]}"
+                return f"[ADVERTENCIA] Plugin '{plugin_name}' no produjo output."
 
             try:
                 data = json.loads(stdout)
                 if not isinstance(data, dict):
-                    return f"⚠ Plugin '{plugin_name}' no retornó un objeto JSON válido."
+                    return f"[ADVERTENCIA] Plugin '{plugin_name}' no retornó un objeto JSON válido."
                 if "ok" not in data:
-                    return f"⚠ Plugin '{plugin_name}' no retornó el campo de estado 'ok'."
+                    return f"[ADVERTENCIA] Plugin '{plugin_name}' no retornó el campo de estado 'ok'."
                 
                 if data.get("ok"):
                     if "result" not in data:
-                        return f"⚠ Plugin '{plugin_name}' no retornó el campo de datos 'result'."
-                    return data["result"] or "✓ Plugin ejecutado (sin output)."
+                        return f"[ADVERTENCIA] Plugin '{plugin_name}' no retornó el campo de datos 'result'."
+                    return data["result"] or "[OK] Plugin ejecutado (sin output)."
                 else:
                     logger.debug(
                         "Error en plugin sandbox '%s': %s\n%s",
@@ -331,11 +331,11 @@ class PluginManager:
                     )
                     return f"Error en plugin '{plugin_name}': {data.get('error', 'Error desconocido')}"
             except json.JSONDecodeError:
-                return f"⚠ Plugin '{plugin_name}' produjo output no-JSON: {stdout[:300]}"
+                return f"[ADVERTENCIA] Plugin '{plugin_name}' produjo output no-JSON: {stdout[:300]}"
 
         except subprocess.TimeoutExpired:
             logger.warning("Plugin '%s' excedió el timeout (%ds)", plugin_name, _PLUGIN_TIMEOUT_S)
-            return f"⏰ Plugin '{plugin_name}' abortado: excedió {_PLUGIN_TIMEOUT_S}s de timeout."
+            return f"[TIMEOUT] Plugin '{plugin_name}' abortado: excedió {_PLUGIN_TIMEOUT_S}s de timeout."
         except Exception as e:
             logger.error("Error ejecutando plugin sandbox '%s': %s", plugin_name, e)
             return f"Error en sandbox de plugin '{plugin_name}': {e}"
@@ -436,7 +436,7 @@ class PluginManager:
                         result = plugin_inst.execute(args)
                     else:
                         result = plugin_inst.execute(method, method_args)
-                return str(result) if result is not None else "✓ Plugin ejecutado."
+                return str(result) if result is not None else "[OK] Plugin ejecutado."
             except Exception as e:
                 logger.error("Error en plugin '%s': %s", plugin_name, e)
                 return f"Error en plugin '{plugin_name}': {e}"
@@ -461,11 +461,11 @@ class PluginManager:
                 else:
                     # module or other call
                     result = inst(args)
-                return str(result) if result is not None else "✓ Plugin ejecutado (sin output)."
+                return str(result) if result is not None else "[OK] Plugin ejecutado (sin output)."
             except KeyboardInterrupt:
-                return f"⚠ Plugin '{plugin_name}' interrumpido."
+                return f"[ADVERTENCIA] Plugin '{plugin_name}' interrumpido."
             except MemoryError:
-                return f"☢ Plugin '{plugin_name}' consumió demasiada memoria."
+                return f"[PELIGRO] Plugin '{plugin_name}' consumió demasiada memoria."
             except Exception as e:
                 tb = traceback.format_exc()
                 logger.error("Error ejecutando plugin '%s': %s\n%s", plugin_name, e, tb)

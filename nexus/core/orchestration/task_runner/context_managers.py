@@ -70,7 +70,7 @@ class TaskContextManager:
                                         with open(target_file_path, "w", encoding="utf-8") as pf:
                                             pf.write("")
                                     logger.info("Auto-creado archivo de contexto Docker faltante: %s", target_file_path)
-                                    console.print(f"       ⚡ Auto-creado placeholder requerido para Docker: [dim]{src_clean}[/dim]")
+                                    console.print(f"       [ACCION] Auto-creado placeholder requerido para Docker: [dim]{src_clean}[/dim]")
                 except Exception as e:
                     logger.error("Error al reconciliar archivos de contexto Docker: %s", e)
 

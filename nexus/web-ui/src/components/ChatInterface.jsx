@@ -60,7 +60,7 @@ export default function ChatInterface({ setSystemState }) {
           messages.map((msg, idx) => (
             <div key={idx} className={`message ${msg.role}`}>
               <div className="message-avatar">
-                {msg.role === 'user' ? 'U' : '🪼'}
+                {msg.role === 'user' ? 'U' : 'J'}
               </div>
               <div className="message-content">
                 {msg.content}
@@ -70,7 +70,7 @@ export default function ChatInterface({ setSystemState }) {
         )}
         {isTyping && (
           <div className="message assistant typing">
-            <div className="message-avatar">🪼</div>
+            <div className="message-avatar">J</div>
             <div className="typing-indicator">
               <span></span><span></span><span></span>
             </div>

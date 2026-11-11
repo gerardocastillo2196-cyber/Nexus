@@ -71,7 +71,7 @@ class AgencyOrchestrator(BaseOrchestrator):
         # Interceptar estado de pausa del pipeline
         if self.state.is_pipeline_paused():
             from core.ui import console
-            console.print("\n[bold red]⚠️  PIPELINE BLOQUEADO - Sentinel Interactive Pause (SIP) Activo[/bold red]")
+            console.print("\n[bold red][ADVERTENCIA]  PIPELINE BLOQUEADO - Sentinel Interactive Pause (SIP) Activo[/bold red]")
             console.print("[yellow]El proyecto se encuentra en modo de 'Esperando Intervención' debido a un fallo previo.[/yellow]")
             return self.run_sentinel_session()
 
@@ -91,7 +91,7 @@ class AgencyOrchestrator(BaseOrchestrator):
         except Exception as e:
             logger.error("Error crítico durante la ejecución de la agencia %s: %s", agency, e, exc_info=True)
             from core.ui import console
-            console.print(f"\n[bold red]❌ Error Crítico en Orquestador de Agencia ({agency}):[/bold red] {e}")
+            console.print(f"\n[bold red][ERROR] Error Crítico en Orquestador de Agencia ({agency}):[/bold red] {e}")
             return f"Error de orquestación en la agencia '{agency}': {e}"
 
     def run_sentinel_session(self) -> str:
@@ -133,13 +133,13 @@ class AgencyOrchestrator(BaseOrchestrator):
             console.print("=" * 80)
             
             try:
-                choice = input("✍ Elige una opción [1-5] > ").strip().lower()
+                choice = input("[INPUT] Elige una opción [1-5] > ").strip().lower()
             except (KeyboardInterrupt, EOFError):
                 return "Intervención de Sentinel abortada por señal del terminal."
 
             if choice in ("5", "exit", "salir", "q", "quit"):
                 import sys
-                console.print("[bold purple]🪼 Jellyfish desconectado. Hasta pronto.[/bold purple]")
+                console.print("[bold purple][JELLYFISH] Jellyfish desconectado. Hasta pronto.[/bold purple]")
                 sys.exit(0)
 
             elif choice == "1":
@@ -148,7 +148,7 @@ class AgencyOrchestrator(BaseOrchestrator):
                 console.print("[bold cyan]------------------------------------------------------------[/bold cyan]\n")
                 
                 try:
-                    new_instructions = input("✍ Ingresa las nuevas instrucciones para reintentar la tarea: ").strip()
+                    new_instructions = input("[INPUT] Ingresa las nuevas instrucciones para reintentar la tarea: ").strip()
                 except (KeyboardInterrupt, EOFError):
                     continue
 
@@ -160,7 +160,7 @@ class AgencyOrchestrator(BaseOrchestrator):
                     # Desbloquear pipeline y retornar código de reintento lineal
                     self.state.set_pipeline_status("OK")
                     self.state.load_agent("default")
-                    console.print("[green]✓ Pipeline desbloqueado. Reintentando tarea linealmente...[/green]")
+                    console.print("[green][OK] Pipeline desbloqueado. Reintentando tarea linealmente...[/green]")
                     return "[RETRY]"
                 else:
                     console.print("[yellow]Instrucciones vacías. Retornando al menú...[/yellow]")
@@ -170,7 +170,7 @@ class AgencyOrchestrator(BaseOrchestrator):
                 self.update_task_in_board(task_id, new_status="FAILED")
                 self.state.set_pipeline_status("OK")
                 self.state.load_agent("default")
-                console.print(f"[green]✓ Tarea {task_id} marcada como FAILED. Continuando con la siguiente tarea...[/green]")
+                console.print(f"[green][OK] Tarea {task_id} marcada como FAILED. Continuando con la siguiente tarea...[/green]")
                 return "[FORCE_CONTINUE]"
 
             elif choice == "3":
@@ -193,7 +193,7 @@ class AgencyOrchestrator(BaseOrchestrator):
                 console.print("  [3] Volver al menú principal de Sentinel.")
                 
                 try:
-                    sub_choice = input("✍ Selecciona una opción [1-3] > ").strip()
+                    sub_choice = input("[INPUT] Selecciona una opción [1-3] > ").strip()
                 except (KeyboardInterrupt, EOFError):
                     continue
 
@@ -235,7 +235,7 @@ class AgencyOrchestrator(BaseOrchestrator):
                 console.print("  [2] Volver al menú principal de Sentinel.")
                 
                 try:
-                    sub_choice = input("✍ Selecciona una opción [1-2] > ").strip()
+                    sub_choice = input("[INPUT] Selecciona una opción [1-2] > ").strip()
                 except (KeyboardInterrupt, EOFError):
                     continue
 

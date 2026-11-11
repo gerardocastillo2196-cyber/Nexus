@@ -221,7 +221,7 @@ class MegaPlannerPhase:
         tareas = sprint_board.get("tareas", [])
         md = f"# Sprint Board\n\n"
         md += f"*Auto-generado por Jellyfish OS Mega-Agente Planificador — {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n\n"
-        md += "## 📋 POR HACER (TODO)\n\n"
+        md += "## [LISTA] POR HACER (TODO)\n\n"
         md += "| ID | Tarea | Asignado | Estimación | Entregable | Dependencias |\n"
         md += "|---|---|---|---|---|---|\n"
         for t in tareas:
@@ -231,11 +231,11 @@ class MegaPlannerPhase:
                 f"| {t.get('id', '')} | {t.get('task', '')} | @{agent} "
                 f"| {t.get('estimacion', 'M')} | {t.get('output_file', '')} | {deps} |\n"
             )
-        md += "\n## ⏳ EN PROCESO (IN PROGRESS)\n\n"
-        md += "## ✅ HECHO (DONE)\n\n"
+        md += "\n## [EN PROCESO] EN PROCESO (IN PROGRESS)\n\n"
+        md += "## [COMPLETADO] HECHO (DONE)\n\n"
 
         # Sección de especificaciones técnicas detalladas
-        md += "---\n\n### 📋 Especificaciones de Tareas y Criterios de Aceptación Técnicos\n\n"
+        md += "---\n\n### [LISTA] Especificaciones de Tareas y Criterios de Aceptación Técnicos\n\n"
         for t in tareas:
             md += f"#### {t.get('id', '')}: {t.get('task', '')}\n"
             md += f"- **Agente:** @{t.get('agent', 'autodetect')}\n"
@@ -351,17 +351,17 @@ class MegaPlannerPhase:
             self.orchestrator._write_project_file(
                 "BACKLOG.json", json.dumps(backlog, indent=2, ensure_ascii=False)
             )
-            console.print("       [dim]✓ BACKLOG.json generado[/dim]")
+            console.print("       [dim][OK] BACKLOG.json generado[/dim]")
 
             # 2. BACKLOG.md
             md_backlog = self._build_md_backlog(backlog)
             self.orchestrator._write_project_file("BACKLOG.md", md_backlog)
-            console.print("       [dim]✓ BACKLOG.md generado[/dim]")
+            console.print("       [dim][OK] BACKLOG.md generado[/dim]")
 
             # 3. ARCHITECTURE.md
             arch_md = self._build_architecture_md(plan)
             self.orchestrator._write_project_file("ARCHITECTURE.md", arch_md)
-            console.print("       [dim]✓ ARCHITECTURE.md generado[/dim]")
+            console.print("       [dim][OK] ARCHITECTURE.md generado[/dim]")
 
             # 4. Sprint Board Markdown + JSON
             # Resolver asignaciones @autodetect programáticamente (0 tokens)
@@ -370,7 +370,7 @@ class MegaPlannerPhase:
             active_agency = getattr(self.orchestrator.state, "active_agency", "")
             resolved = _resolve_agent_assignments(tasks_list, active_agency)
             if resolved:
-                console.print(f"       [dim]✓ {resolved} asignación(es) @autodetect resueltas programáticamente[/dim]")
+                console.print(f"       [dim][OK] {resolved} asignación(es) @autodetect resueltas programáticamente[/dim]")
                 # Reflejar las resoluciones en sprint_board
                 for i, t in enumerate(sprint_board.get("tareas", [])):
                     if i < len(tasks_list):
@@ -378,19 +378,19 @@ class MegaPlannerPhase:
 
             board_md = self._build_sprint_board_md(sprint_board, board_filename)
             self.orchestrator._write_project_file(board_filename, board_md)
-            console.print(f"       [dim]✓ {board_filename} generado[/dim]")
+            console.print(f"       [dim][OK] {board_filename} generado[/dim]")
 
             json_board_filename = board_filename.replace(".md", ".json")
             self.orchestrator._write_project_file(
                 json_board_filename, json.dumps(tasks_list, indent=2, ensure_ascii=False)
             )
-            console.print(f"       [dim]✓ {json_board_filename} generado[/dim]")
+            console.print(f"       [dim][OK] {json_board_filename} generado[/dim]")
 
             return True
 
         except Exception as e:
             logger.error("MegaPlanner: Error escribiendo artefactos: %s", e, exc_info=True)
-            console.print(f"[red]❌ Error al escribir artefactos del Mega-Planner: {e}[/red]")
+            console.print(f"[red][ERROR] Error al escribir artefactos del Mega-Planner: {e}[/red]")
             return False
 
     # ── Flujo Principal ─────────────────────────────────────────────────────────
@@ -404,7 +404,7 @@ class MegaPlannerPhase:
             2. Llamada LLM obligatoria: generación del JSON maestro completo
             3. Python puro: escritura de todos los artefactos físicos (sin cuota)
         """
-        console.print("\n━━━ FASE ÚNICA: 🧠 Mega-Agente Planificador ━━━")
+        console.print("\n━━━ FASE ÚNICA: [ORQUESTADOR] Mega-Agente Planificador ━━━")
         console.print("[dim]   Consolidando planificación en máximo 2 llamadas al LLM...[/dim]")
         t0 = time.perf_counter()
 
@@ -435,16 +435,16 @@ class MegaPlannerPhase:
             console.print()
             console.print(Panel(
                 f"[bold cyan]{clarification_response.strip()}[/bold cyan]",
-                title="[bold yellow]🧠 Mega-Agente Planificador (Clarificación)[/bold yellow]",
+                title="[bold yellow][ORQUESTADOR] Mega-Agente Planificador (Clarificación)[/bold yellow]",
                 border_style="cyan"
             ))
             console.print(
-                "[dim]💡 Presiona Enter en blanco para asumir automáticamente los estándares de la industria.[/dim]"
+                "[dim][SUGERENCIA] Presiona Enter en blanco para asumir automáticamente los estándares de la industria.[/dim]"
             )
             console.print()
 
             try:
-                user_clarification = input("✍ Responde (o Enter para omitir) > ").strip()
+                user_clarification = input("[INPUT] Responde (o Enter para omitir) > ").strip()
             except (KeyboardInterrupt, EOFError):
                 user_clarification = ""
 
@@ -453,7 +453,7 @@ class MegaPlannerPhase:
                     f"IDEA ORIGINAL DEL USUARIO:\n{user_idea}\n\n"
                     f"ACLARACIÓN DEL USUARIO:\n{user_clarification}"
                 )
-                console.print("[green]✓ Aclaración integrada al contexto de planificación.[/green]")
+                console.print("[green][OK] Aclaración integrada al contexto de planificación.[/green]")
             else:
                 clarification_context = (
                     f"IDEA ORIGINAL DEL USUARIO:\n{user_idea}\n\n"
@@ -463,9 +463,9 @@ class MegaPlannerPhase:
                     "PostgreSQL para BD, Docker para infraestructura). "
                     "Procede a generar el plan técnico completo sin detenerte."
                 )
-                console.print("[yellow]⚡ Fallback automático: asumiendo estándares de la industria.[/yellow]")
+                console.print("[yellow][ACCION] Fallback automático: asumiendo estándares de la industria.[/yellow]")
         else:
-            console.print("[green]✓ Requerimientos suficientes. Generando plan maestro directamente.[/green]")
+            console.print("[green][OK] Requerimientos suficientes. Generando plan maestro directamente.[/green]")
 
         # ── Llamada 2: Generación del JSON Maestro ─────────────────────────────
         # Cargar capacidades del entorno si existen (sin cuota, solo lectura de archivo)
@@ -574,7 +574,7 @@ class MegaPlannerPhase:
                 )
                 if attempt < MAX_GENERATION_RETRIES:
                     console.print(
-                        f"[yellow]⚠ Intento {attempt}/{MAX_GENERATION_RETRIES}: "
+                        f"[yellow][ADVERTENCIA] Intento {attempt}/{MAX_GENERATION_RETRIES}: "
                         f"Error de parseo JSON. Solicitando corrección...[/yellow]"
                     )
 
@@ -582,15 +582,15 @@ class MegaPlannerPhase:
 
         if plan is None:
             console.print(
-                f"\n[bold red]🚨 HARD CRASH: Mega-Agente no pudo generar el plan maestro "
+                f"\n[bold red][ALERTA CRITICA] HARD CRASH: Mega-Agente no pudo generar el plan maestro "
                 f"tras {MAX_GENERATION_RETRIES} intentos.[/bold red]"
             )
             console.print(f"[red]Último error: {last_error}[/red]")
             self.orchestrator.metrics.append({
-                "fase": "🧠 Mega-Planner",
+                "fase": "[ORQUESTADOR] Mega-Planner",
                 "detalle": f"HARD CRASH ({(last_error or '')[:40]}...)",
                 "tiempo": elapsed,
-                "status": "❌",
+                "status": "[ERROR]",
             })
             # Activar pausa de Sentinel para intervención manual
             self.orchestrator.state.set_pipeline_status("PIPELINE_PAUSED", {
@@ -607,7 +607,7 @@ class MegaPlannerPhase:
             return False
 
         # ── Fase Local: Escritura de Artefactos (sin cuota) ────────────────────
-        console.print("\n[dim]   📁 Generando artefactos del proyecto (Python puro, sin cuota)...[/dim]")
+        console.print("\n[dim]   [DIR] Generando artefactos del proyecto (Python puro, sin cuota)...[/dim]")
         if not self.write_artifacts(plan):
             return False
 
@@ -622,7 +622,7 @@ class MegaPlannerPhase:
         )
         tasks_count = len(plan.get("sprint_board", {}).get("tareas", []))
 
-        console.print(f"\n[bold green]📋 Plan Maestro de {backlog.get('proyecto', 'Proyecto')} generado:[/bold green]")
+        console.print(f"\n[bold green][LISTA] Plan Maestro de {backlog.get('proyecto', 'Proyecto')} generado:[/bold green]")
         console.print(f"   - Épicas: {len(stories)} historias de usuario")
         console.print(f"   - Sprint Board: {tasks_count} tareas técnicas")
         console.print(f"   - Equipo: {', '.join(f'@{a}' for a in sorted(unique_agents) if a)}")
@@ -633,7 +633,7 @@ class MegaPlannerPhase:
 
         try:
             approval = input(
-                "\n✍ Escribe comentarios para ajustar el plan, o responde 'y'/'aprobado' para continuar > "
+                "\n[INPUT] Escribe comentarios para ajustar el plan, o responde 'y'/'aprobado' para continuar > "
             ).strip()
         except (KeyboardInterrupt, EOFError):
             approval = "y"
@@ -651,24 +651,24 @@ class MegaPlannerPhase:
                 with open(daily_path, "a", encoding="utf-8") as f:
                     f.write(daily_note)
                 console.print(
-                    "[yellow]📝 Comentario registrado en DAILY.md. "
+                    "[yellow][NOTA] Comentario registrado en DAILY.md. "
                     "El Task Runner lo tendrá en cuenta durante la ejecución.[/yellow]"
                 )
             except Exception:
                 pass
 
-        console.print("✓ Plan Maestro aprobado. Iniciando ejecución del sprint.\n")
+        console.print("[OK] Plan Maestro aprobado. Iniciando ejecución del sprint.\n")
 
         # ── Métricas ───────────────────────────────────────────────────────────
         total_tokens = estimate_tokens(current_response or "")
         self.orchestrator.metrics.append({
-            "fase": "🧠 Mega-Agente Planificador",
+            "fase": "[ORQUESTADOR] Mega-Agente Planificador",
             "detalle": (
                 f"~{total_tokens:,} tokens → "
                 f"BACKLOG.json + ARCHITECTURE.md + {getattr(self.orchestrator, 'board_filename', 'SPRINT_BOARD.md')}"
             ),
             "tiempo": elapsed,
-            "status": "✅",
+            "status": "[COMPLETADO]",
         })
 
         return True

@@ -155,7 +155,7 @@ class StateProxy:
 
     def update_board_status(self, task_id: str, new_status: str) -> bool:
         """Actualiza el estado de una tarea con protección de cerrojos síncronos."""
-        allowed_statuses = {"TODO", "IN_PROGRESS", "DONE", "FAILED", "BLOCKED", "✅", "❌", "🔄", "BLOCKED ⛔"}
+        allowed_statuses = {"TODO", "IN_PROGRESS", "DONE", "FAILED", "BLOCKED", "[COMPLETADO]", "[ERROR]", "[RECARGA]", "BLOCKED [BLOQUEADO]"}
         if new_status not in allowed_statuses:
             logger.warning("Estado no permitido para board: %s", new_status)
             return False
@@ -176,12 +176,12 @@ class StateProxy:
                 updated_lines = []
                 for line in lines:
                     if task_id in line and "|" in line:
-                        if new_status in ("DONE", "✅"):
-                            line = line.rstrip() + " ✅"
-                        elif new_status in ("FAILED", "❌"):
-                            line = line.rstrip() + " ❌"
-                        elif new_status in ("BLOCKED", "BLOCKED ⛔"):
-                            line = line.rstrip() + " ⛔ BLOCKED (Circuit Breaker)"
+                        if new_status in ("DONE", "[COMPLETADO]"):
+                            line = line.rstrip() + " [COMPLETADO]"
+                        elif new_status in ("FAILED", "[ERROR]"):
+                            line = line.rstrip() + " [ERROR]"
+                        elif new_status in ("BLOCKED", "BLOCKED [BLOQUEADO]"):
+                            line = line.rstrip() + " [BLOQUEADO] BLOCKED (Circuit Breaker)"
                     updated_lines.append(line)
 
                 with open(board_path, "w", encoding="utf-8") as f:
@@ -194,7 +194,7 @@ class StateProxy:
 
     async def aupdate_board_status(self, task_id: str, new_status: str) -> bool:
         """Actualiza el estado de una tarea asincrónamente con aiofiles."""
-        allowed_statuses = {"TODO", "IN_PROGRESS", "DONE", "FAILED", "BLOCKED", "✅", "❌", "🔄", "BLOCKED ⛔"}
+        allowed_statuses = {"TODO", "IN_PROGRESS", "DONE", "FAILED", "BLOCKED", "[COMPLETADO]", "[ERROR]", "[RECARGA]", "BLOCKED [BLOQUEADO]"}
         if new_status not in allowed_statuses:
             logger.warning("Estado no permitido para board: %s", new_status)
             return False
@@ -216,12 +216,12 @@ class StateProxy:
                 updated_lines = []
                 for line in lines:
                     if task_id in line and "|" in line:
-                        if new_status in ("DONE", "✅"):
-                            line = line.rstrip() + " ✅"
-                        elif new_status in ("FAILED", "❌"):
-                            line = line.rstrip() + " ❌"
-                        elif new_status in ("BLOCKED", "BLOCKED ⛔"):
-                            line = line.rstrip() + " ⛔ BLOCKED (Circuit Breaker)"
+                        if new_status in ("DONE", "[COMPLETADO]"):
+                            line = line.rstrip() + " [COMPLETADO]"
+                        elif new_status in ("FAILED", "[ERROR]"):
+                            line = line.rstrip() + " [ERROR]"
+                        elif new_status in ("BLOCKED", "BLOCKED [BLOQUEADO]"):
+                            line = line.rstrip() + " [BLOQUEADO] BLOCKED (Circuit Breaker)"
                     updated_lines.append(line)
 
                 async with aiofiles.open(board_path, "w", encoding="utf-8") as f:

@@ -195,7 +195,7 @@ class TaskRunnerPhase:
         if rlist:
             return sys.stdin.readline().strip()
         else:
-            console.print("\n[dim]✗ Timeout agotado (60s). Asumiendo confirmación afirmativa por defecto (Dry Run).[/dim]")
+            console.print("\n[dim][X] Timeout agotado (60s). Asumiendo confirmación afirmativa por defecto (Dry Run).[/dim]")
             return "y"
 
     def run(self, user_idea: str) -> None:
@@ -208,7 +208,7 @@ class TaskRunnerPhase:
             if os.path.isfile(json_path):
                 with open(json_path, "r", encoding="utf-8") as f:
                     tasks = json.load(f)
-                    console.print(f"[dim]       ⚙ Tablero JSON estructurado cargado exitosamente.[/dim]")
+                    console.print(f"[dim]       [SISTEMA] Tablero JSON estructurado cargado exitosamente.[/dim]")
         except Exception as je:
             logger.warning("Error leyendo tablero JSON: %s. Reintentando por Markdown.", je)
 
@@ -218,14 +218,14 @@ class TaskRunnerPhase:
             tasks = _parse_sprint_tasks(board)
 
         if not tasks:
-            console.print(f"⚠ No se encontraron tareas en el tablero {self.orchestrator.board_filename}.")
+            console.print(f"[ADVERTENCIA] No se encontraron tareas en el tablero {self.orchestrator.board_filename}.")
             return
 
         # Ordenamiento topológico del Grafo Dirigido (DAG)
         tasks = topological_sort(tasks)
 
         console.print(
-            f"\n━━━ FASE 3: 🚀 Task Runner — {len(tasks)} tareas ordenadas por dependencias (DAG) ━━━\n"
+            f"\n━━━ FASE 3: [INICIO] Task Runner — {len(tasks)} tareas ordenadas por dependencias (DAG) ━━━\n"
         )
 
         for i, task in enumerate(tasks):
@@ -264,7 +264,7 @@ class TaskRunnerPhase:
                     "fase": f"@{agent_name} ({task_id_str})",
                     "detalle": f"Bloqueada por dependencia: {missing_dep}",
                     "tiempo": 0.0,
-                    "status": "⚠️ BLOCKED",
+                    "status": "[ADVERTENCIA] BLOCKED",
                 })
                 continue
 
@@ -554,7 +554,7 @@ class TaskRunnerPhase:
                                             self._ask_usr_count = ask_usr_count
 
                                             if is_trivial or ask_usr_count >= 2:
-                                                console.print(f"       [dim]🤖 [Autonomía Supresión HITL]: Interceptada consulta trivial de @{agent_name}: '{ask_usr}' -> Procediendo autónomamente.[/dim]")
+                                                console.print(f"       [dim][IA] [Autonomía Supresión HITL]: Interceptada consulta trivial de @{agent_name}: '{ask_usr}' -> Procediendo autónomamente.[/dim]")
                                                 react_messages.append({"role": "assistant", "content": response_chunk})
                                                 react_messages.append({
                                                     "role": "user",
@@ -563,11 +563,11 @@ class TaskRunnerPhase:
                                                 continue
 
                                             console.print("\n[bold yellow]──────────────────────────────────────────────────────────────────────[/bold yellow]")
-                                            console.print(f"[bold yellow]🤔 CONSULTA HITL DE @{agent_name}:[/bold yellow]")
+                                            console.print(f"[bold yellow][CONSULTA] CONSULTA HITL DE @{agent_name}:[/bold yellow]")
                                             console.print(f"[yellow]{ask_usr}[/yellow]")
                                             console.print("[bold yellow]──────────────────────────────────────────────────────────────────────[/bold yellow]")
 
-                                            user_response = self._get_user_input_nonblocking("✍ Escribe tu respuesta: ")
+                                            user_response = self._get_user_input_nonblocking("[INPUT] Escribe tu respuesta: ")
 
                                             react_messages.append({"role": "assistant", "content": response_chunk})
                                             user_msg = {"role": "user", "content": f"Respuesta del usuario a tu consulta: {user_response}"}
@@ -578,7 +578,7 @@ class TaskRunnerPhase:
                                         if run_cmd:
                                             run_cmd_lower = run_cmd.lower()
                                             if "sudo " in run_cmd_lower or "apt " in run_cmd_lower or "apt-get" in run_cmd_lower or "pacman" in run_cmd_lower or "dnf " in run_cmd_lower:
-                                                console.print(f"       🛡️ [Seguridad Host]: Bloqueado intento de modificar sistema host ({run_cmd}).")
+                                                console.print(f"       [SEGURIDAD] [Seguridad Host]: Bloqueado intento de modificar sistema host ({run_cmd}).")
                                                 react_messages.append({"role": "assistant", "content": response_chunk})
                                                 react_messages.append({
                                                     "role": "user",
@@ -586,7 +586,7 @@ class TaskRunnerPhase:
                                                 })
                                                 continue
 
-                                            console.print(f"       ⚙ Agente @{agent_name} ejecutando comando ReAct: {run_cmd} (Archivo: {sub_file})")
+                                            console.print(f"       [SISTEMA] Agente @{agent_name} ejecutando comando ReAct: {run_cmd} (Archivo: {sub_file})")
 
                                             ret_dict = {'returncode': 0}
                                             cmd_output = run_terminal_command(
@@ -711,7 +711,7 @@ class TaskRunnerPhase:
                                     success_task = True
                                     break
                                 else:
-                                    console.print(f"       ❌ DoD Rechazado: {dod_reason}")
+                                    console.print(f"       [ERROR] DoD Rechazado: {dod_reason}")
                                     last_error_log = f"DoD rechazado: {dod_reason}"
                                     res_type, res_val = self.executor.run_sentinel_auto_healing(
                                         task_id_str, agent_name, task_desc, output_file, last_error_log, created_files, self._get_user_input_nonblocking
@@ -733,7 +733,7 @@ class TaskRunnerPhase:
                                                 progress.fail()
                                                 break
                                             if dod_approved:
-                                                console.print("       [green]🛡️ Auto-Curación exitosa! La validación DoD ha sido aprobada tras la corrección de Sentinel.[/green]")
+                                                console.print("       [green][SEGURIDAD] Auto-Curación exitosa! La validación DoD ha sido aprobada tras la corrección de Sentinel.[/green]")
                                                 event_bus.publish(EventType.TASK_COMPLETED, {"task_id": task_id_str, "reason": "Aprobado tras Auto-Curación de Sentinel", "agent_name": agent_name})
                                                 success_task = True
                                                 break
@@ -773,7 +773,7 @@ class TaskRunnerPhase:
                                     success_task = True
                                     break
                                 else:
-                                    console.print(f"       ❌ DoD Rechazado: {dod_reason}")
+                                    console.print(f"       [ERROR] DoD Rechazado: {dod_reason}")
                                     last_error_log = f"DoD rechazado tras compilar con éxito: {dod_reason}"
                                     res_type, res_val = self.executor.run_sentinel_auto_healing(
                                         task_id_str, agent_name, task_desc, output_file, last_error_log, created_files, self._get_user_input_nonblocking
@@ -795,7 +795,7 @@ class TaskRunnerPhase:
                                                     progress.fail()
                                                     break
                                                 if dod_approved:
-                                                    console.print("       [green]🛡️ Auto-Curación exitosa! La validación DoD ha sido aprobada tras la corrección de Sentinel.[/green]")
+                                                    console.print("       [green][SEGURIDAD] Auto-Curación exitosa! La validación DoD ha sido aprobada tras la corrección de Sentinel.[/green]")
                                                     event_bus.publish(EventType.TASK_COMPLETED, {"task_id": task_id_str, "reason": "Aprobado tras Auto-Curación de Sentinel", "agent_name": agent_name})
                                                     success_task = True
                                                     break
@@ -826,7 +826,7 @@ class TaskRunnerPhase:
                                                 progress.fail()
                                                 break
                                             if dod_approved:
-                                                console.print("       [green]🛡️ Auto-Curación exitosa! La validación DoD ha sido aprobada tras la corrección de Sentinel.[/green]")
+                                                console.print("       [green][SEGURIDAD] Auto-Curación exitosa! La validación DoD ha sido aprobada tras la corrección de Sentinel.[/green]")
                                                 event_bus.publish(EventType.TASK_COMPLETED, {"task_id": task_id_str, "reason": "Aprobado tras Auto-Curación de Sentinel", "agent_name": agent_name})
                                                 success_task = True
                                                 break
@@ -861,7 +861,7 @@ class TaskRunnerPhase:
                     
                     if task_retries < MAX_RETRIES:
                         task_desc = f"FIX REQUIRED: [Log del error: {last_error_log}]\nOriginal task description: {original_task_desc}"
-                        console.print(f"       🔄 [Auto-Retry] Reintentando tarea {task_id_str} (Reintento {task_retries}/{MAX_RETRIES})...")
+                        console.print(f"       [RECARGA] [Auto-Retry] Reintentando tarea {task_id_str} (Reintento {task_retries}/{MAX_RETRIES})...")
                     else:
                         self.orchestrator.state.global_status = "ERROR"
                         event_bus.publish(EventType.AGENT_STATUS_CHANGE, {"agent": agent_name, "status": "Inactivo"})
@@ -875,7 +875,7 @@ class TaskRunnerPhase:
                             "fase": f"@{agent_name} ({task_id_str})",
                             "detalle": f"Fallo Crítico: {last_error_log[:50]}...",
                             "tiempo": getattr(self, "task_elapsed", 0.0),
-                            "status": "❌",
+                            "status": "[ERROR]",
                         })
 
                         # Sentinel Interactive Pause (SIP)
@@ -925,7 +925,7 @@ class TaskRunnerPhase:
                 self.ctx_manager.commit_transaction(task_id_str, use_microbranch, original_branch_or_snapshot)
 
             tokens = estimate_tokens(task_result) if task_result else 0
-            status_symbol = "✅" if success_task else "⚠"
+            status_symbol = "[COMPLETADO]" if success_task else "[ADVERTENCIA]"
             status_text = "Completado con éxito" if success_task else "Completado con advertencias"
 
             self.orchestrator.metrics.append({
@@ -983,7 +983,7 @@ class TaskRunnerPhase:
                 
                 updated_log = existing_log.rstrip() + "\n\n" + log_entry
                 self.orchestrator._write_project_file(log_filename, updated_log)
-                console.print("       [dim]✓ Bitácora de desarrollo actualizada (DEVELOPMENT_LOG.md)[/dim]")
+                console.print("       [dim][OK] Bitácora de desarrollo actualizada (DEVELOPMENT_LOG.md)[/dim]")
             except Exception as log_err:
                 logger.warning("No se pudo escribir en DEVELOPMENT_LOG.md: %s", log_err)
 

@@ -11,7 +11,7 @@ export default function EscribaDashboardView({ onNavigate }) {
   });
   const [chapters, setChapters] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [importStatus, setImportStatus] = useState('');
+  const [hasProject, setHasProject] = useState(false);
 
   const fetchDashboardData = async () => {
     setLoading(true);
@@ -58,135 +58,186 @@ export default function EscribaDashboardView({ onNavigate }) {
   };
 
   useEffect(() => {
+    const checkProjects = async () => {
+      try {
+        const res = await fetch('/api/escriba/projects');
+        if (res.ok) {
+          const data = await res.json();
+          const projs = data.projects || [];
+          setHasProject(Boolean(projs.find(p => p.active)));
+        }
+      } catch (err) {
+        setHasProject(false);
+      }
+    };
+    checkProjects();
     fetchDashboardData();
   }, []);
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    setImportStatus(`Importando '${file.name}'...`);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const content = event.target.result;
-      const title = file.name.replace(/\.[^/.]+$/, '');
-      try {
-        const res = await fetch('/api/escriba/chapters', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: title,
-            content: content,
-            status: 'Borrador'
-          })
-        });
-        if (res.ok) {
-          setImportStatus(`✓ '${file.name}' cargado e importado como nuevo capítulo.`);
-          fetchDashboardData();
-        }
-      } catch (err) {
-        setImportStatus(' Error al importar el archivo.');
+  const handleToggleChapterStatus = async (e, chap) => {
+    e.stopPropagation();
+    const newStatus = chap.status === 'Finalizado' ? 'Borrador' : 'Finalizado';
+    try {
+      const res = await fetch('/api/escriba/chapters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: chap.id,
+          title: chap.title,
+          content: chap.content || '',
+          status: newStatus
+        })
+      });
+      if (res.ok) {
+        fetchDashboardData();
       }
-    };
-    reader.readAsText(file);
+    } catch (err) {
+      console.error('Error actualizando estado del capítulo:', err);
+    }
   };
 
   return (
-    <div className="view-container escriba-dashboard-container" style={{ padding: '24px', color: 'var(--text-primary, #f8fafc)', height: '100%', overflowY: 'auto', background: 'transparent' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', pb: '16px' }}>
+    <div className="view-container escriba-dashboard-container" style={{ padding: '32px 36px', height: '100%', overflowY: 'auto' }}>
+      {/* Header Pro */}
+      <div className="pro-view-header">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h1 style={{ margin: 0, fontSize: '22px', fontWeight: 700, color: 'var(--text-primary, #ffffff)' }}>
-              ESCRIBA — Tablero de Trabajo y Cargar Archivo
-            </h1>
-          </div>
-          <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted, #94a3b8)', fontSize: '13px' }}>
-            Resumen estadístico de progreso literario, estado del manuscrito e importación de archivos.
+          <h1 className="pro-view-title escriba-glow-text">
+            ESCRIBA — Tablero de Creación & Manuscrito
+          </h1>
+          <p className="pro-view-subtitle">
+            Panel de control narrativo, métricas de lectura y gestión secuencial de capítulos.
           </p>
         </div>
+
+        <button
+          onClick={() => onNavigate?.('escriba_editor')}
+          className="pro-btn pro-btn-amber"
+        >
+          <span>Abrir Canva de Redacción</span>
+        </button>
       </div>
 
-      {/* Cargar Archivo / Importar Manuscrito Section */}
-      <div style={{ background: 'var(--surface-elevated, rgba(255,255,255,0.03))', border: '1px solid var(--border-focus, #3b82f6)', borderRadius: '12px', padding: '20px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-        <div>
-          <h3 style={{ margin: '0 0 4px 0', fontSize: '16px', color: 'var(--text-primary, #fff)' }}>Cargar / Importar Archivo de Manuscrito</h3>
-          <p style={{ margin: 0, fontSize: '13px', color: 'var(--text-secondary, #cbd5e1)' }}>
-            Selecciona un archivo de texto (`.txt`, `.md`) para importarlo directamente como un nuevo capítulo.
-          </p>
-          {importStatus && (
-            <span style={{ display: 'block', marginTop: '6px', fontSize: '12px', color: 'var(--accent-blue, #38bdf8)', fontWeight: 600 }}>{importStatus}</span>
-          )}
-        </div>
-
-        <label style={{ padding: '10px 20px', background: 'var(--accent-blue, #3b82f6)', color: '#fff', borderRadius: '8px', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-          <span>Cargar Archivo</span>
-          <input type="file" accept=".txt,.md,.markdown,.json" onChange={handleFileUpload} style={{ display: 'none' }} />
-        </label>
-      </div>
-
-      {/* Metrics Cards Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+      {/* Metrics Cards Grid Pro */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '18px', marginBottom: '32px' }}>
         
-        <div style={{ background: 'var(--surface-container, rgba(255,255,255,0.03))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', fontWeight: 700 }}>Total de Palabras</span>
-          <span style={{ fontSize: '26px', fontWeight: 800, color: 'var(--accent-blue, #38bdf8)' }}>{stats.totalWords.toLocaleString()}</span>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #64748b)' }}>Palabras redactadas</span>
+        <div className="pro-stat-card">
+          <span className="pro-stat-label">Total de Palabras</span>
+          <span className="pro-stat-number" style={{ color: '#fb923c' }}>{stats.totalWords.toLocaleString()}</span>
+          <span className="pro-stat-sub">Palabras redactadas en el manuscrito</span>
         </div>
 
-        <div style={{ background: 'var(--surface-container, rgba(255,255,255,0.03))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', fontWeight: 700 }}>Tiempo de Lectura</span>
-          <span style={{ fontSize: '26px', fontWeight: 800, color: '#38bdf8' }}>~{stats.readingTime} min</span>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #64748b)' }}>A 200 pal/min</span>
+        <div className="pro-stat-card">
+          <span className="pro-stat-label">Tiempo de Lectura</span>
+          <span className="pro-stat-number" style={{ color: '#fbbf24' }}>~{stats.readingTime} min</span>
+          <span className="pro-stat-sub">Ritmo estándar (200 pal/min)</span>
         </div>
 
-        <div style={{ background: 'var(--surface-container, rgba(255,255,255,0.03))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', fontWeight: 700 }}>Capítulos Totales</span>
-          <span style={{ fontSize: '26px', fontWeight: 800, color: '#34d399' }}>{stats.chapterCount}</span>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #64748b)' }}>Capítulos creados</span>
+        <div className="pro-stat-card">
+          <span className="pro-stat-label">Capítulos Totales</span>
+          <span className="pro-stat-number" style={{ color: '#34d399' }}>{stats.chapterCount}</span>
+          <span className="pro-stat-sub">Capítulos estructurados</span>
         </div>
 
-        <div style={{ background: 'var(--surface-container, rgba(255,255,255,0.03))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', fontWeight: 700 }}>Entidades en Grafo</span>
-          <span style={{ fontSize: '26px', fontWeight: 800, color: '#f59e0b' }}>{stats.nodeCount}</span>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #64748b)' }}>{stats.linkCount} alianzas registradas</span>
+        <div className="pro-stat-card">
+          <span className="pro-stat-label">Entidades en Grafo</span>
+          <span className="pro-stat-number" style={{ color: '#818cf8' }}>{stats.nodeCount}</span>
+          <span className="pro-stat-sub">{stats.linkCount} relaciones registradas</span>
         </div>
 
-        <div style={{ background: 'var(--surface-container, rgba(255,255,255,0.03))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)', textTransform: 'uppercase', fontWeight: 700 }}>Progreso Manuscrito</span>
-          <span style={{ fontSize: '26px', fontWeight: 800, color: '#00e5ff' }}>{stats.completionPercentage}%</span>
-          <span style={{ fontSize: '11px', color: 'var(--text-muted, #64748b)' }}>Capítulos finalizados</span>
+        <div className="pro-stat-card">
+          <span className="pro-stat-label">Progreso Manuscrito</span>
+          <span className="pro-stat-number" style={{ color: '#22d3ee' }}>{stats.completionPercentage}%</span>
+          <span className="pro-stat-sub">Capítulos finalizados</span>
         </div>
 
       </div>
 
-      {/* Chapter Breakdown */}
-      <div style={{ background: 'var(--surface-container, rgba(255,255,255,0.03))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', borderRadius: '12px', padding: '20px' }}>
-        <h3 style={{ margin: '0 0 16px 0', fontSize: '16px', color: 'var(--text-primary, #fff)' }}>Avances y Desglose por Capítulo</h3>
+      {/* Chapter Breakdown Card Pro */}
+      <div className="pro-card" style={{ padding: '26px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 700, color: '#f8fafc' }}>
+              Avances y Desglose por Capítulo
+            </h3>
+            <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#8b95a5' }}>
+              Haz clic en cualquier capítulo para abrirlo en el Canva de Escritura o alternar su estado de revisión.
+            </p>
+          </div>
+          <span className="pro-badge" style={{ background: 'rgba(255, 255, 255, 0.04)', color: '#94a3b8', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+            {chapters.length} capítulos
+          </span>
+        </div>
 
         {chapters.length === 0 ? (
-          <p style={{ color: 'var(--text-muted, #94a3b8)', fontSize: '13px' }}>No hay capítulos registrados en el proyecto actual.</p>
+          <div style={{ textAlign: 'center', padding: '48px 16px', color: '#64748b' }}>
+            <p style={{ margin: '0 0 6px 0', fontSize: '14px', color: '#94a3b8' }}>No hay capítulos registrados en el proyecto activo.</p>
+            <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: '#64748b' }}>Puedes redactar o solicitar capítulos en el chat de ESCRIBA para sincronizarlos con el Canva.</p>
+            <button
+              onClick={() => onNavigate?.('escriba_editor')}
+              className="pro-btn pro-btn-amber"
+            >
+              Crear Primer Fragmento en Canva
+            </button>
+          </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {chapters.map((chap, idx) => (
-              <div key={chap.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-tertiary, rgba(255,255,255,0.03))', padding: '12px 16px', borderRadius: '8px', border: '1px solid var(--border-subtle, rgba(255,255,255,0.06))' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--accent-blue, #38bdf8)', fontWeight: 700 }}>#{idx + 1}</span>
+              <div
+                key={chap.id}
+                onClick={() => onNavigate?.('escriba_editor')}
+                style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  background: 'rgba(8, 10, 18, 0.5)',
+                  padding: '14px 18px', borderRadius: '10px',
+                  border: '1px solid rgba(255, 255, 255, 0.05)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(245, 158, 11, 0.04)';
+                  e.currentTarget.style.borderColor = 'rgba(245, 158, 11, 0.25)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(8, 10, 18, 0.5)';
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.05)';
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <span style={{
+                    fontSize: '12px', color: '#fbbf24', fontWeight: 700,
+                    width: '32px', height: '32px', borderRadius: '8px',
+                    background: 'rgba(245, 158, 11, 0.1)',
+                    border: '1px solid rgba(245, 158, 11, 0.2)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                  }}>
+                    #{idx + 1}
+                  </span>
                   <div>
-                    <h4 style={{ margin: 0, fontSize: '14px', color: 'var(--text-primary, #fff)' }}>{chap.title}</h4>
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted, #94a3b8)' }}>{chap.wordCount || 0} palabras • ~{Math.ceil((chap.wordCount || 0) / 200)} min</span>
+                    <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#f8fafc' }}>{chap.title}</h4>
+                    <span style={{ fontSize: '12px', color: '#64748b' }}>{chap.wordCount || 0} palabras • ~{Math.ceil((chap.wordCount || 0) / 200)} min de lectura</span>
                   </div>
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '10px', background: chap.status === 'Finalizado' ? 'rgba(52, 211, 153, 0.2)' : 'rgba(245, 158, 11, 0.2)', color: chap.status === 'Finalizado' ? '#6ee7b7' : '#fcd34d', fontWeight: 600 }}>
-                    {chap.status}
-                  </span>
-                  <button
-                    onClick={() => onNavigate('escriba_editor')}
-                    style={{ padding: '6px 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}
+                  {/* Status Toggle Pill */}
+                  <span
+                    onClick={(e) => handleToggleChapterStatus(e, chap)}
+                    title="Alternar entre Borrador y Finalizado"
+                    className={`pro-badge ${chap.status === 'Finalizado' ? 'pro-badge-emerald' : 'pro-badge-amber'}`}
+                    style={{ cursor: 'pointer' }}
                   >
-                    Abrir Editor
+                    <span className="pro-badge-dot" />
+                    {chap.status === 'Finalizado' ? 'Finalizado' : 'Borrador'}
+                  </span>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onNavigate?.('escriba_editor');
+                    }}
+                    className="pro-btn pro-btn-secondary pro-btn-sm"
+                  >
+                    Editar
                   </button>
                 </div>
               </div>
@@ -197,3 +248,4 @@ export default function EscribaDashboardView({ onNavigate }) {
     </div>
   );
 }
+

@@ -144,7 +144,7 @@ def try_deterministic_healing(orchestrator, cmd: str, build_output: str) -> tupl
         
     if python_import_match:
         module_name = python_import_match.group(1)
-        console.print(f"       [bold green]✓[/bold green] [green]Curación Determinista: Detectado módulo Python faltante '{module_name}'. Instalando...[/green]")
+        console.print(f"       [bold green][OK][/bold green] [green]Curación Determinista: Detectado módulo Python faltante '{module_name}'. Instalando...[/green]")
         pip_cmd = "pip"
         for venv_dir in ("venv", ".venv"):
             venv_pip = os.path.join(orchestrator.project_path, venv_dir, "bin", "pip")
@@ -163,7 +163,7 @@ def try_deterministic_healing(orchestrator, cmd: str, build_output: str) -> tupl
     node_import_match = re.search(r"Cannot\s+find\s+module\s+['\"]?([a-zA-Z0-9_-]+)['\"]?", build_output)
     if node_import_match:
         module_name = node_import_match.group(1)
-        console.print(f"       [bold green]✓[/bold green] [green]Curación Determinista: Detectado módulo npm faltante '{module_name}'. Instalando...[/green]")
+        console.print(f"       [bold green][OK][/bold green] [green]Curación Determinista: Detectado módulo npm faltante '{module_name}'. Instalando...[/green]")
         run_terminal_command(f"npm install {module_name}", orchestrator.state, silent_history=True)
         
         # Re-correr comando original
@@ -186,7 +186,7 @@ def auto_heal_build_error(orchestrator, cmd: str, returncode: int, build_output:
     resolved, code, out = try_deterministic_healing(orchestrator, cmd, build_output)
     if resolved:
         if code == 0:
-            console.print("       ✓ ¡Auto-Healing Determinista exitoso! El entorno se ha auto-recuperado.")
+            console.print("       [OK] ¡Auto-Healing Determinista exitoso! El entorno se ha auto-recuperado.")
             return 0, out
         else:
             current_code = code
@@ -195,7 +195,7 @@ def auto_heal_build_error(orchestrator, cmd: str, returncode: int, build_output:
     error_class = classify_build_error(current_output)
     
     for attempt in range(1, 4):
-        console.print(f"\n       ⚡ [Auto-Healing Loop] Intento {attempt}/3 para resolver fallo de compilación...")
+        console.print(f"\n       [ACCION] [Auto-Healing Loop] Intento {attempt}/3 para resolver fallo de compilación...")
         console.print(f"       [dim]Clasificación del fallo: {error_class}[/dim]")
         
         # DIAGNÓSTICO: Analizar archivos del entorno para dar contexto
@@ -239,7 +239,7 @@ def auto_heal_build_error(orchestrator, cmd: str, returncode: int, build_output:
         
         response = _call_llm_silent(orchestrator.state, messages, provider=orchestrator.state.provider, model=orchestrator.state.model)
         if not response:
-            console.print("       ⚠ No se obtuvo respuesta del Agente de Auto-Recuperación.")
+            console.print("       [ADVERTENCIA] No se obtuvo respuesta del Agente de Auto-Recuperación.")
             healing_attempts_log.append(f"Intento {attempt}: Sin respuesta del modelo.")
             continue
             
@@ -251,10 +251,10 @@ def auto_heal_build_error(orchestrator, cmd: str, returncode: int, build_output:
             cmd_clean = cmd_to_run.strip()
             if cmd_clean:
                 if not is_safe_healing_command(cmd_clean):
-                    console.print(f"       🛡 Bloqueado comando potencialmente peligroso en Auto-Healing: {cmd_clean}")
+                    console.print(f"       [SEGURIDAD] Bloqueado comando potencialmente peligroso en Auto-Healing: {cmd_clean}")
                     healing_attempts_log.append(f"Intento {attempt}: Comando peligroso '{cmd_clean}' bloqueado por seguridad.")
                     continue
-                console.print(f"       ⚙ Ejecutando parche de entorno: {cmd_clean}")
+                console.print(f"       [SISTEMA] Ejecutando parche de entorno: {cmd_clean}")
                 run_terminal_command(cmd_clean, orchestrator.state, silent_history=True)
                 executed_cmds.append(cmd_clean)
                 
@@ -265,7 +265,7 @@ def auto_heal_build_error(orchestrator, cmd: str, returncode: int, build_output:
         )
         
         # REINTENTO
-        console.print(f"       🔄 Reintentando comando original: {cmd}")
+        console.print(f"       [RECARGA] Reintentando comando original: {cmd}")
         ret_dict = {'returncode': 0}
         new_output = run_terminal_command(
             cmd,
@@ -280,11 +280,11 @@ def auto_heal_build_error(orchestrator, cmd: str, returncode: int, build_output:
         current_output = new_output
         
         if current_code == 0:
-            console.print("       ✓ ¡Auto-Healing exitoso! El entorno se ha auto-recuperado.")
+            console.print("       [OK] ¡Auto-Healing exitoso! El entorno se ha auto-recuperado.")
             return 0, current_output
             
     # ESCALAMIENTO
-    console.print("       ❌ Auto-Healing Loop falló tras 3 intentos. Escalando error.")
+    console.print("       [ERROR] Auto-Healing Loop falló tras 3 intentos. Escalando error.")
     if not hasattr(orchestrator.state, "healing_failures"):
         orchestrator.state.healing_failures = {}
     orchestrator.state.healing_failures[cmd] = "\n".join(healing_attempts_log)
@@ -305,7 +305,7 @@ def run_sentinel_auto_healing(
     from core.terminal import screen_console as scr_console
     from core.llm_engine import _call_llm_silent
     
-    scr_console.print(f"\n[bold yellow]🛡️  @Sentinel[/bold yellow] analizando error del primer fallo para auto-curar la tarea...")
+    scr_console.print(f"\n[bold yellow][SEGURIDAD]  @Sentinel[/bold yellow] analizando error del primer fallo para auto-curar la tarea...")
     
     files_context = ""
     for rel_f in created_files:
@@ -359,8 +359,8 @@ def run_sentinel_auto_healing(
                 fixed_files = [target_f]
         
         if fixed_files:
-            log_msg = f"🛡️ @Sentinel (Auto-Healing) aplicó corrección en: {', '.join(fixed_files)}. Razón: {explanation}"
-            scr_console.print(f"       [bold green]✓[/bold green] [green]{log_msg}[/green]")
+            log_msg = f"[SEGURIDAD] @Sentinel (Auto-Healing) aplicó corrección en: {', '.join(fixed_files)}. Razón: {explanation}"
+            scr_console.print(f"       [bold green][OK][/bold green] [green]{log_msg}[/green]")
             logger.info(log_msg)
             
             _write_sentinel_action_to_log(orchestrator, task_id, log_msg)
@@ -372,23 +372,23 @@ def run_sentinel_auto_healing(
         question = sentinel_res_strip.replace("[ASK_USER]", "").strip()
         if sentinel_mode == "autonomous":
             # Interceptar intento de preguntar en modo autónomo y forzarlo como FEEDBACK
-            log_msg = f"🛡️ @Sentinel intentó preguntar en modo autónomo. Redirigiendo a FEEDBACK: {question}"
+            log_msg = f"[SEGURIDAD] @Sentinel intentó preguntar en modo autónomo. Redirigiendo a FEEDBACK: {question}"
             logger.warning(log_msg)
-            scr_console.print(f"       [bold yellow]⚠[/bold yellow] [yellow]{log_msg}[/yellow]")
+            scr_console.print(f"       [bold yellow][ADVERTENCIA][/bold yellow] [yellow]{log_msg}[/yellow]")
             return "FEEDBACK", f"Sentinel solicitó depurar lo siguiente de forma autónoma: {question}"
             
         scr_console.print("\n[bold yellow]──────────────────────────────────────────────────────────────────────[/bold yellow]")
-        scr_console.print(f"[bold yellow]🛡️ @Sentinel REQUIERE TU AYUDA PARA DEPURAR:[/bold yellow]")
+        scr_console.print(f"[bold yellow][SEGURIDAD] @Sentinel REQUIERE TU AYUDA PARA DEPURAR:[/bold yellow]")
         scr_console.print(f"[yellow]{question}[/yellow]")
         scr_console.print("[bold yellow]──────────────────────────────────────────────────────────────────────[/bold yellow]")
         
-        user_response = get_user_input_nonblocking_fn("✍ Escribe tu respuesta: ").strip()
+        user_response = get_user_input_nonblocking_fn("[INPUT] Escribe tu respuesta: ").strip()
         feedback_msg = f"Respuesta del usuario para Sentinel: '{user_response}'. Análisis previo de Sentinel: {question}"
         return "ASK_USER", feedback_msg
         
     else:
         feedback_text = sentinel_res_strip.replace("[FEEDBACK]", "").strip()
-        log_msg = f"🛡️ @Sentinel generó instrucciones de corrección: {feedback_text[:120]}..."
+        log_msg = f"[SEGURIDAD] @Sentinel generó instrucciones de corrección: {feedback_text[:120]}..."
         scr_console.print(f"       [yellow]{log_msg}[/yellow]")
         return "FEEDBACK", feedback_text
 
@@ -400,7 +400,7 @@ def _write_sentinel_action_to_log(orchestrator, task_id: str, log_msg: str) -> N
         
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        entry = f"\n* **[{timestamp}] 🛡️ @Sentinel (Auto-Healing) — {task_id}**: {log_msg}\n"
+        entry = f"\n* **[{timestamp}] [SEGURIDAD] @Sentinel (Auto-Healing) — {task_id}**: {log_msg}\n"
         
         updated_log = existing_log.rstrip() + "\n" + entry
         orchestrator._write_project_file(log_filename, updated_log)

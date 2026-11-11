@@ -11,7 +11,7 @@ from core.terminal import run_terminal_command
 
 # Templates
 _SCRUM_METHODOLOGY_TEMPLATE = """\
-# 📘 Metodología Scrum — Jellyfish OS
+# [MANUAL] Metodología Scrum — Jellyfish OS
 
 ## Roles
 - **Scrum Master (@scrum_master):** Facilita el proceso, elimina impedimentos, actualiza los documentos de seguimiento.
@@ -20,10 +20,10 @@ _SCRUM_METHODOLOGY_TEMPLATE = """\
 
 ## Priorización Oficial (Metodología MoSCoW)
 Todas las historias de usuario en el backlog se priorizan obligatoriamente bajo el esquema MoSCoW:
-- **Must-have (🔴):** Requerimientos críticos e indispensables para la versión.
-- **Should-have (🟡):** Requerimientos de alta importancia pero no bloqueantes inmediatamente.
-- **Could-have (🟢):** Funcionalidades deseables si hay tiempo/recursos disponibles.
-- **Won't-have (⚪):** Requerimientos explícitamente descartados o diferidos para futuros lanzamientos.
+- **Must-have ([CRITICO]):** Requerimientos críticos e indispensables para la versión.
+- **Should-have ([MEDIO]):** Requerimientos de alta importancia pero no bloqueantes inmediatamente.
+- **Could-have ([BAJO]):** Funcionalidades deseables si hay tiempo/recursos disponibles.
+- **Won't-have ([DESCARTADO]):** Requerimientos explícitamente descartados o diferidos para futuros lanzamientos.
 
 ## Artefactos
 | Artefacto | Archivo | Propósito |
@@ -67,10 +67,10 @@ Una tarea se considera **DONE** cuando:
 """
 
 _BACKLOG_TEMPLATE = """\
-# 📋 Product Backlog: Proyecto Jellyfish
+# [LISTA] Product Backlog: Proyecto Jellyfish
 
 **Visión del Producto:** Desarrollar una solución robusta y escalable bajo arquitectura de agentes autónomos.
-> Prioridad MoSCoW: Must-have (🔴) | Should-have (🟡) | Could-have (🟢) | Won't-have (⚪)
+> Prioridad MoSCoW: Must-have ([CRITICO]) | Should-have ([MEDIO]) | Could-have ([BAJO]) | Won't-have ([DESCARTADO])
 
 ## Historias de Usuario
 
@@ -78,7 +78,7 @@ _BACKLOG_TEMPLATE = """\
 - **Como:** Arquitecto / Desarrollador Principal
 - **Quiero:** Configurar el gestor de dependencias, contenedorización Docker y punto de entrada principal del proyecto
 - **Para:** Garantizar un andamiaje 100% ejecutable, compilable y desplegable antes de la lógica de negocio
-- **Prioridad (MoSCoW):** Must-have (🔴)
+- **Prioridad (MoSCoW):** Must-have ([CRITICO])
 - **Estimación:** S (3 pts)
 
 #### Criterios de Aceptación (Gherkin)
@@ -101,7 +101,7 @@ _BACKLOG_TEMPLATE = """\
 - **Como:** Usuario registrado
 - **Quiero:** Iniciar sesión con credenciales seguras
 - **Para:** Acceder a las funciones personalizadas del sistema
-- **Prioridad (MoSCoW):** Must-have (🔴)
+- **Prioridad (MoSCoW):** Must-have ([CRITICO])
 - **Estimación:** M (5 pts)
 
 #### Criterios de Aceptación (Gherkin)
@@ -122,14 +122,14 @@ _BACKLOG_TEMPLATE = """\
 """
 
 _SPRINT_BOARD_TEMPLATE = """\
-# 🗂️ Sprint Board — Sprint 1
+# [TABLERO] Sprint Board — Sprint 1
 
 > Sprint Goal: [Definir objetivo del sprint]
 > Duración: [Fecha inicio] → [Fecha fin]
 
 ---
 
-## 📋 POR HACER (TODO)
+## [LISTA] POR HACER (TODO)
 
 | ID | Tarea | Asignado | Estimación |
 |---|---|---|---|
@@ -137,7 +137,7 @@ _SPRINT_BOARD_TEMPLATE = """\
 
 ---
 
-## ⏳ EN PROCESO (IN PROGRESS)
+## [EN PROCESO] EN PROCESO (IN PROGRESS)
 
 | ID | Tarea | Asignado | Estimación | Inicio |
 |---|---|---|---|---|
@@ -145,7 +145,7 @@ _SPRINT_BOARD_TEMPLATE = """\
 
 ---
 
-## ✅ HECHO (DONE)
+## [COMPLETADO] HECHO (DONE)
 
 | ID | Tarea | Asignado | Completado |
 |---|---|---|---|
@@ -158,7 +158,7 @@ _SPRINT_BOARD_TEMPLATE = """\
 """
 
 _DAILY_TEMPLATE = """\
-# 📝 Daily Standup Log
+# [NOTA] Daily Standup Log
 
 > Registro de comunicación diaria entre agentes.
 > Formato: `[FECHA] [@AGENTE] — Mensaje`
@@ -178,7 +178,7 @@ _DAILY_TEMPLATE = """\
 """
 
 _WATERFALL_METHODOLOGY_TEMPLATE = """\
-# 📘 Metodología de Cascada (Waterfall) — Jellyfish OS
+# [MANUAL] Metodología de Cascada (Waterfall) — Jellyfish OS
 
 La metodología de cascada sigue un enfoque secuencial y estructurado, donde cada fase debe completarse antes de pasar a la siguiente.
 
@@ -199,7 +199,7 @@ La metodología de cascada sigue un enfoque secuencial y estructurado, donde cad
 """
 
 _REQUIREMENTS_TEMPLATE = """\
-# 📋 Especificación de Requisitos
+# [LISTA] Especificación de Requisitos
 
 ## 1. Requisitos Funcionales
 | ID | Descripción | Prioridad | Estado | Aprobado Por |
@@ -216,7 +216,7 @@ _REQUIREMENTS_TEMPLATE = """\
 """
 
 _DESIGN_TEMPLATE = """\
-# 🎨 Documentación de Diseño y Arquitectura
+# [DISENO] Documentación de Diseño y Arquitectura
 
 ## 1. Arquitectura del Sistema
 [Describir el enfoque arquitectónico, por ejemplo: Monolito, Microservicios, Arquitectura Limpia]
@@ -232,23 +232,23 @@ _DESIGN_TEMPLATE = """\
 """
 
 _GANTT_TEMPLATE = """\
-# 📅 Cronograma del Proyecto (Cascada)
+# [CRONOGRAMA] Cronograma del Proyecto (Cascada)
 
-> Estado de Fase: ⏳ Pendiente | ⚙️ En Desarrollo | ✅ Completada
+> Estado de Fase: [EN PROCESO] Pendiente | [SISTEMA] En Desarrollo | [COMPLETADO] Completada
 
 ## Secuencia de Fases
 
-- [ ] **Fase 1: Requisitos** (Inicio: [Fecha] ➔ Fin: [Fecha]) — ⏳
-- [ ] **Fase 2: Diseño** (Inicio: [Fecha] ➔ Fin: [Fecha]) — ⏳
-- [ ] **Fase 3: Implementación** (Inicio: [Fecha] ➔ Fin: [Fecha]) — ⏳
-- [ ] **Fase 4: Verificación** (Inicio: [Fecha] ➔ Fin: [Fecha]) — ⏳
+- [ ] **Fase 1: Requisitos** (Inicio: [Fecha] > Fin: [Fecha]) — [EN PROCESO]
+- [ ] **Fase 2: Diseño** (Inicio: [Fecha] > Fin: [Fecha]) — [EN PROCESO]
+- [ ] **Fase 3: Implementación** (Inicio: [Fecha] > Fin: [Fecha]) — [EN PROCESO]
+- [ ] **Fase 4: Verificación** (Inicio: [Fecha] > Fin: [Fecha]) — [EN PROCESO]
 
 ---
 *Última actualización: {date}*
 """
 
 _TESTS_LOG_TEMPLATE = """\
-# 🧪 Registro de Pruebas y Verificación
+# [TEST] Registro de Pruebas y Verificación
 
 ## Historial de Casos de Prueba
 
@@ -284,14 +284,14 @@ def show_project_guide_if_needed(state) -> None:
     guide_lines = [
         "",
         "==============================================================",
-        "      🪼 GUÍA DE CONSTRUCCIÓN MULTI-AGENCIA JELLYFISH OS",
+        "      [JELLYFISH] GUÍA DE CONSTRUCCIÓN MULTI-AGENCIA JELLYFISH OS",
         "==============================================================",
         "",
         f"ℹ️  ESTADO ACTUAL DEL PROYECTO: {project_status}",
         f"  • Metodología activa: {methodology}  • Agencia activa: {agency}",
         "",
         "--------------------------------------------------------------",
-        "🪼 1. ARQUITECTURA MULTI-AGENCIA (JELLYFISH OS v6.9.15)",
+        "[JELLYFISH] 1. ARQUITECTURA MULTI-AGENCIA (JELLYFISH OS v6.9.15)",
         "Jellyfish OS agrupa a los agentes en agencias especializadas:",
         "  - DEVELOPMENT: Ingeniería de software, bugs, arquitectura y desarrollo.",
         "  - MARKETING: Estrategias de venta, SEO, redacción de copy y contenido.",
@@ -299,24 +299,24 @@ def show_project_guide_if_needed(state) -> None:
         "  - MANAGEMENT: Orquestación, Scrum Master y Product Owner de proyectos.",
         "",
         "--------------------------------------------------------------",
-        "🤖 2. EL CEO CLASIFICADOR (AGENCY ORCHESTRATOR)",
+        "[IA] 2. EL CEO CLASIFICADOR (AGENCY ORCHESTRATOR)",
         "Al ejecutar /auto 'tu idea', el CEO clasifica tu prompt y lo delega",
         "a la agencia correspondiente para evitar interferencias entre tableros.",
         "",
         "--------------------------------------------------------------",
-        "📋 3. TABLEROS DE TRABAJO DINÁMICOS",
+        "[LISTA] 3. TABLEROS DE TRABAJO DINÁMICOS",
         "Cada agencia gestiona sus tareas en tableros separados:",
         "  - Desarrollo / Default -> DEV_BOARD.md (o SPRINT_BOARD.md)",
         "  - Marketing -> MKT_BOARD.md",
         "  - Investigación -> RESEARCH_BOARD.md",
         "",
         "--------------------------------------------------------------",
-        "🔄 4. HANDOFFS INTER-AGENCIA (TRASPASOS)",
+        "[RECARGA] 4. HANDOFFS INTER-AGENCIA (TRASPASOS)",
         "Los Scrum Masters coordinan entregables cruzados. Si una tarea",
         "excede la agencia activa, planifican entregables como insumos para otra.",
         "",
         "--------------------------------------------------------------",
-        "🚀 5. GUÍA DE TRABAJO PASO A PASO",
+        "[INICIO] 5. GUÍA DE TRABAJO PASO A PASO",
         "  PASO 1: Vincular o Crear un Proyecto",
         "  • Ejecuta /project new ./mi-proyecto para inicializar el espacio.",
         "",
@@ -337,7 +337,7 @@ def show_project_guide_if_needed(state) -> None:
         "  • Usa /add 'archivo' para cargarlo en el contexto del chat.",
         "",
         "--------------------------------------------------------------",
-        "👉 ¿Quieres ocultar esta guía? Escribe /goff · Escribe /help para el manual.",
+        "> ¿Quieres ocultar esta guía? Escribe /goff · Escribe /help para el manual.",
         "==============================================================",
         ""
     ]
@@ -497,7 +497,7 @@ def _project_create(raw_path: str, state, rag, display_header_func, methodology:
 
     methodology_label = "Scrum" if methodology == "scrum" else "Cascada"
     if created:
-        console.print(f"✓ Archivos de metodología {methodology_label} creados: {', '.join(created)}")
+        console.print(f"[OK] Archivos de metodología {methodology_label} creados: {', '.join(created)}")
     else:
         console.print(f"[dim]Los archivos de {methodology_label} ya existían, no se sobreescribieron.[/dim]")
 
@@ -518,7 +518,7 @@ def _project_create(raw_path: str, state, rag, display_header_func, methodology:
     except Exception as e:
         logger.error("Error guardando is_new_project en config: %s", e)
 
-    console.print(f"✓ Proyecto activo: {project_path} ({methodology_label})")
+    console.print(f"[OK] Proyecto activo: {project_path} ({methodology_label})")
 
 
 
@@ -532,31 +532,31 @@ def _project_create(raw_path: str, state, rag, display_header_func, methodology:
         try:
             rag.index_codebase(project_path)
         except KeyboardInterrupt:
-            console.print("\n[bold yellow]⚠ Indexación cancelada por el usuario.[/bold yellow]")
+            console.print("\n[bold yellow][ADVERTENCIA] Indexación cancelada por el usuario.[/bold yellow]")
 
     input("\nPresiona Enter para continuar...")
 
 def _project_info(state) -> None:
     if not state.active_project:
-        console.print("⚠ No hay proyecto activo. Usa /project para crear uno.")
+        console.print("[ADVERTENCIA] No hay proyecto activo. Usa /project para crear uno.")
         return
 
     methodology = getattr(state, "project_methodology", "scrum").lower()
     if methodology == "cascada":
         methodology_files = ["WATERFALL_METHODOLOGY.md", "REQUIREMENTS.md", "DESIGN.md", "GANTT.md", "TESTS_LOG.md"]
-        title_label = "📁 PROYECTO ACTIVO (CASCADA)"
+        title_label = "[DIR] PROYECTO ACTIVO (CASCADA)"
     else:
         methodology_files = ["SCRUM_METHODOLOGY.md", "BACKLOG.md", "SPRINT_BOARD.md", "DAILY.md"]
-        title_label = "📁 PROYECTO ACTIVO (SCRUM)"
+        title_label = "[DIR] PROYECTO ACTIVO (SCRUM)"
 
     status_lines = []
     for f in methodology_files:
         fp = os.path.join(state.active_project, f)
         if os.path.isfile(fp):
             size = os.path.getsize(fp)
-            status_lines.append(f"  ✓ {f} ({size:,} bytes)")
+            status_lines.append(f"  [OK] {f} ({size:,} bytes)")
         else:
-            status_lines.append(f"  ✗ {f} (no encontrado)")
+            status_lines.append(f"  [X] {f} (no encontrado)")
 
     content = (
         f"Proyecto Activo: {state.active_project}\n\n"
@@ -567,7 +567,7 @@ def _project_info(state) -> None:
 
 def _project_unlink(state, display_header_func) -> None:
     if not state.active_project:
-        console.print("⚠ No hay proyecto vinculado.")
+        console.print("[ADVERTENCIA] No hay proyecto vinculado.")
         return
 
     old = state.active_project
@@ -586,7 +586,7 @@ def _project_unlink(state, display_header_func) -> None:
     if hasattr(state, "reset_history"):
         state.reset_history()
     state.refresh_static_context()
-    console.print(f"✓ Proyecto desvinculado: {old}")
+    console.print(f"[OK] Proyecto desvinculado: {old}")
 
 def _project_delete(state, display_header_func) -> None:
     project_path = state.active_project
@@ -606,7 +606,7 @@ def _project_delete(state, display_header_func) -> None:
         console.print(f"Error: La ruta del proyecto no existe: {project_path}")
         return
         
-    console.print(f"⚠️  ¡ADVERTENCIA DE ELIMINACIÓN FÍSICA! Se eliminará permanentemente la carpeta:")
+    console.print(f"[ADVERTENCIA]  ¡ADVERTENCIA DE ELIMINACIÓN FÍSICA! Se eliminará permanentemente la carpeta:")
     console.print(f"   {project_path}")
     console.print("   Todos los archivos y subcarpetas serán borrados de forma irrecuperable.")
     
@@ -625,11 +625,11 @@ def _project_delete(state, display_header_func) -> None:
                     state.context_files.discard(fp)
                 state.save_config(active_project="", project_methodology="scrum")
                 state.refresh_static_context()
-                console.print("✓ Proyecto desvinculado del estado.")
+                console.print("[OK] Proyecto desvinculado del estado.")
             
             try:
                 shutil.rmtree(project_path)
-                console.print(f"✓ Carpeta y proyecto eliminados con éxito del disco duro.")
+                console.print(f"[OK] Carpeta y proyecto eliminados con éxito del disco duro.")
             except Exception as pe:
                 def _on_error(func, path, exc_info):
                     import stat
@@ -656,7 +656,7 @@ def _project_delete(state, display_header_func) -> None:
                     console.print("Ejecuta en tu terminal host:")
                     console.print(f"   sudo rm -rf {project_path}\n")
                 else:
-                    console.print(f"✓ Carpeta y proyecto eliminados con éxito tras resolver permisos.")
+                    console.print(f"[OK] Carpeta y proyecto eliminados con éxito tras resolver permisos.")
         except Exception as e:
             console.print(f"Error al eliminar físicamente el proyecto: {e}")
     else:
@@ -664,7 +664,7 @@ def _project_delete(state, display_header_func) -> None:
 
 def _project_reset_circuit_breaker(state) -> None:
     if not state.active_project:
-        console.print("⚠ No hay proyecto activo vinculado.")
+        console.print("[ADVERTENCIA] No hay proyecto activo vinculado.")
         return
     
     cb_path = os.path.join(state.active_project, ".jellyfish_circuit_breaker")
@@ -680,14 +680,14 @@ def _project_reset_circuit_breaker(state) -> None:
                 console.print(f"Error al eliminar {os.path.basename(path)}: {e}")
                 
     if success:
-        console.print("✓ Circuit Breaker restablecido. Puedes ejecutar /auto nuevamente.")
+        console.print("[OK] Circuit Breaker restablecido. Puedes ejecutar /auto nuevamente.")
     else:
         console.print("[dim]El Circuit Breaker ya estaba limpio.[/dim]")
 
 def _handle_compile(state) -> None:
     """Ejecuta el comando de compilación del proyecto activo en tiempo real."""
     if not state.active_project:
-        console.print("⚠ No hay un proyecto activo vinculado. Usa /project primero.")
+        console.print("[ADVERTENCIA] No hay un proyecto activo vinculado. Usa /project primero.")
         return
         
     from core.project_orchestrator import ProjectOrchestrator
@@ -695,10 +695,10 @@ def _handle_compile(state) -> None:
     build_cmd = orchestrator._detect_compile_command()
     
     if not build_cmd:
-        console.print("⚠ No se detectó ningún comando de compilación para este proyecto.")
+        console.print("[ADVERTENCIA] No se detectó ningún comando de compilación para este proyecto.")
         return
         
-    console.print(f"🛠 Compilando proyecto activo con comando: {build_cmd}...")
+    console.print(f"[COMPILACION] Compilando proyecto activo con comando: {build_cmd}...")
     
     ret_dict = {'returncode': 0}
     run_terminal_command(build_cmd, state, return_code_dict=ret_dict)
@@ -713,4 +713,4 @@ def _handle_compile(state) -> None:
                     os.remove(path)
                 except Exception:
                     pass
-        console.print("✓ Compilación exitosa. Circuit Breaker restablecido.")
+        console.print("[OK] Compilación exitosa. Circuit Breaker restablecido.")

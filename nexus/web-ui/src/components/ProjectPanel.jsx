@@ -43,7 +43,7 @@ export default function ProjectPanel({ onClose, onStateRefresh }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: `✓ ${data.message}` });
+        setMessage({ type: 'success', text: `[OK] ${data.message}` });
         setSwitchPath('');
         await fetchProjectInfo();
         onStateRefresh?.();
@@ -70,7 +70,7 @@ export default function ProjectPanel({ onClose, onStateRefresh }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: `✓ ${data.message}` });
+        setMessage({ type: 'success', text: `[OK] ${data.message}` });
         setNewProjectName('');
         setNewParentDir('');
         await fetchProjectInfo();
@@ -116,7 +116,7 @@ export default function ProjectPanel({ onClose, onStateRefresh }) {
             <span className="modal-icon"></span>
             <h2>Administración de Proyectos y Workspace</h2>
           </div>
-          <button className="close-btn" onClick={onClose}>✕</button>
+          <button className="close-btn" onClick={onClose}>X</button>
         </div>
 
         {/* Body */}
@@ -181,7 +181,7 @@ export default function ProjectPanel({ onClose, onStateRefresh }) {
 
               {/* Form 1: Switch Project */}
               <div className="form-section">
-                <h3>📂 Cambiar a un Proyecto Existente</h3>
+                <h3>Cambiar a un Proyecto Existente</h3>
                 <form onSubmit={handleSwitchProject} className="rag-doc-form inline-form">
                   <input 
                     type="text"
@@ -199,7 +199,7 @@ export default function ProjectPanel({ onClose, onStateRefresh }) {
 
               {/* Form 2: Create New Project */}
               <div className="form-section">
-                <h3>✨ Crear Nuevo Proyecto de Software</h3>
+                <h3>Crear Nuevo Proyecto de Software</h3>
                 <form onSubmit={handleCreateProject} className="settings-form">
                   <div className="form-group-row">
                     <div className="form-group">

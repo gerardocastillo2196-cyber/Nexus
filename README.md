@@ -80,8 +80,10 @@ Nexus OS v7.0 introduce la arquitectura modular de herramientas, activables de f
 ### Iniciar el Servidor Web (Nexus OS v7.0)
 
 ```bash
-# Iniciar backend FastAPI
+# Iniciar backend FastAPI (Nexus + ESCRIBA + Jellyfish)
 python3 jellyfish_web.py
+# O directamente:
+python3 nexus/nexus.py
 
 # El servidor estará disponible en http://localhost:8001
 ```
@@ -89,7 +91,20 @@ python3 jellyfish_web.py
 ### Desarrollo de la Interfaz Web (Vite + React)
 
 ```bash
-cd web-ui
+# Desde la raíz del repositorio:
 npm run dev     # Servidor de desarrollo
 npm run build   # Compilar bundle de producción
+
+# O ingresando al subdirectorio:
+cd nexus/web-ui
+npm run dev
+npm run build
 ```
+
+### Administración y Diagnóstico
+
+```bash
+python3 manage.py --status   # Auditar estado del sistema y configuración de proveedores
+python3 manage.py --setup    # Inicializar directorios de trabajo y sincronizar agentes
+```
+

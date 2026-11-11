@@ -108,7 +108,7 @@ class ProductOwnerPhase:
 
     def run(self, user_idea: str) -> bool:
         """Genera BACKLOG.md y solicita aprobación del usuario."""
-        console.print("\n━━━ FASE 1: 📝 Product Owner ━━━")
+        console.print("\n━━━ FASE 1: [NOTA] Product Owner ━━━")
         t0 = time.perf_counter()
 
         agent_prompt = self.orchestrator._load_agent_prompt("product_owner")
@@ -117,12 +117,12 @@ class ProductOwnerPhase:
         cb_count = self.orchestrator._get_circuit_breaker_count()
         
         if last_exit != 0 and cb_count >= 3:
-            console.print(f"❌ CIRCUIT BREAKER ACTIVADO: El entorno falló la compilación {cb_count} veces consecutivas a pesar de los intentos de Auto-Healing. Intervención manual requerida.")
+            console.print(f"[ERROR] CIRCUIT BREAKER ACTIVADO: El entorno falló la compilación {cb_count} veces consecutivas a pesar de los intentos de Auto-Healing. Intervención manual requerida.")
             try:
                 reset_cb = Confirm.ask("¿Deseas restablecer el Circuit Breaker y forzar la ejecución de todas formas? [y/n]", default=False)
                 if reset_cb:
                     self.orchestrator._reset_circuit_breaker()
-                    console.print("✓ Circuit Breaker restablecido. Iniciando ejecución...\n")
+                    console.print("[OK] Circuit Breaker restablecido. Iniciando ejecución...\n")
                     last_exit = 0
             except (EOFError, KeyboardInterrupt):
                 return False
@@ -148,7 +148,7 @@ class ProductOwnerPhase:
 
         from core.llm_engine import _call_llm_silent
         
-        console.print("[dim]       ⚙ Iniciando bucle de refinamiento interactivo del Product Owner...[/dim]")
+        console.print("[dim]       [SISTEMA] Iniciando bucle de refinamiento interactivo del Product Owner...[/dim]")
         
         refining = True
         refinement_log = [f"Idea inicial del proyecto: {user_idea}"]
@@ -168,7 +168,7 @@ class ProductOwnerPhase:
                     logger.info("El prompt/DSL entregado contiene contexto técnico suficiente. Continuando con la generación de backlog.")
                     response = "READY"
                 else:
-                    console.print("[yellow]⚠ El Product Owner no respondió. Activando cuestionario de fallback automático...[/yellow]")
+                    console.print("[yellow][ADVERTENCIA] El Product Owner no respondió. Activando cuestionario de fallback automático...[/yellow]")
                 
                 # Cuestionario de fallback predeterminado según el dominio
                 fallback_questions = []
@@ -206,15 +206,15 @@ class ProductOwnerPhase:
                     console.print()
                     console.print(Panel(
                         f"[bold cyan]{question}[/bold cyan]",
-                        title="[bold yellow]🤖 Product Owner (Fallback de Refinamiento)[/bold yellow]",
+                        title="[bold yellow][IA] Product Owner (Fallback de Refinamiento)[/bold yellow]",
                         border_style="cyan"
                     ))
                     console.print()
                     
                     try:
-                        user_input = input("✍ Responde al PO (o escribe /skip o /ready para continuar) > ").strip()
+                        user_input = input("[INPUT] Responde al PO (o escribe /skip o /ready para continuar) > ").strip()
                     except (KeyboardInterrupt, EOFError):
-                        console.print("\n[yellow]⚠ Refinamiento de fallback cancelado por el usuario. Continuando...[/yellow]")
+                        console.print("\n[yellow][ADVERTENCIA] Refinamiento de fallback cancelado por el usuario. Continuando...[/yellow]")
                         break
                         
                     if not user_input or user_input.lower() in ("/skip", "/ready"):
@@ -227,7 +227,7 @@ class ProductOwnerPhase:
                 
             clean_response = response.strip().replace(".", "").replace("!", "").upper()
             if clean_response == "READY":
-                console.print("[green]✓ Product Owner determinó que los requerimientos están completos y listos (READY).[/green]")
+                console.print("[green][OK] Product Owner determinó que los requerimientos están completos y listos (READY).[/green]")
                 break
                 
             # Presentar la pregunta destacada en cian usando un Panel de Rich
@@ -235,22 +235,22 @@ class ProductOwnerPhase:
             console.print()
             console.print(Panel(
                 f"[bold cyan]{response}[/bold cyan]",
-                title="[bold yellow]🤖 Product Owner (Refinamiento)[/bold yellow]",
+                title="[bold yellow][IA] Product Owner (Refinamiento)[/bold yellow]",
                 border_style="cyan"
             ))
             console.print()
             
             try:
-                user_input = input("✍ Responde al PO (o escribe /skip o /ready para continuar) > ").strip()
+                user_input = input("[INPUT] Responde al PO (o escribe /skip o /ready para continuar) > ").strip()
             except (KeyboardInterrupt, EOFError):
-                console.print("\n[yellow]⚠ Refinamiento cancelado por el usuario. Continuando con la generación estructurada...[/yellow]")
+                console.print("\n[yellow][ADVERTENCIA] Refinamiento cancelado por el usuario. Continuando con la generación estructurada...[/yellow]")
                 break
                 
             if not user_input:
                 continue
                 
             if user_input.lower() in ("/skip", "/ready"):
-                console.print("[yellow]⏭ Escape Hatch: Forzando generación del backlog con la información actual.[/yellow]")
+                console.print("[yellow][OMITIR] Escape Hatch: Forzando generación del backlog con la información actual.[/yellow]")
                 break
                 
             refinement_history.append({"role": "assistant", "content": response})
@@ -325,8 +325,8 @@ class ProductOwnerPhase:
                 result = self.orchestrator._call_agent(system, po_prompt, json_mode=True, timeout=300.0, temperature=0.2)
 
         if not result:
-            self.orchestrator.metrics.append({"fase": "📝 Product Owner", "detalle": "ERROR", "tiempo": elapsed, "status": "❌"})
-            console.print("✗ Product Owner no produjo resultado.")
+            self.orchestrator.metrics.append({"fase": "[NOTA] Product Owner", "detalle": "ERROR", "tiempo": elapsed, "status": "[ERROR]"})
+            console.print("[X] Product Owner no produjo resultado.")
             return False
 
         # Validar y escribir BACKLOG.json con bucle estricto de reintentos (MAX_JSON_RETRIES = 3)
@@ -347,7 +347,7 @@ class ProductOwnerPhase:
                 last_error = str(e)
                 logger.warning("Fallo intento %d/%d al parsear JSON del Product Owner: %s", attempt, MAX_JSON_RETRIES, e)
                 if attempt < MAX_JSON_RETRIES:
-                    console.print(f"[yellow]⚠ Intento {attempt}/{MAX_JSON_RETRIES}: Error de sintaxis JSON en la respuesta. Solicitando corrección...[/yellow]")
+                    console.print(f"[yellow][ADVERTENCIA] Intento {attempt}/{MAX_JSON_RETRIES}: Error de sintaxis JSON en la respuesta. Solicitando corrección...[/yellow]")
                     correction_system = (
                         "Error de sintaxis JSON. Devuelve ÚNICAMENTE una estructura JSON válida con las historias de usuario."
                     )
@@ -363,7 +363,7 @@ class ProductOwnerPhase:
                         logger.error("Error al llamar al LLM para corrección de JSON: %s", e_call)
 
         if parsed_backlog is None:
-            console.print("\n[bold red]🚨 HARD CRASH: Tolerancia cero en parseo JSON de Product Owner.[/bold red]")
+            console.print("\n[bold red][ALERTA CRITICA] HARD CRASH: Tolerancia cero en parseo JSON de Product Owner.[/bold red]")
             console.print(f"[red]No fue posible obtener un BACKLOG.json válido tras {MAX_JSON_RETRIES} intentos de sintaxis. Último error: {last_error}[/red]")
             # Alerta crítica y pausa en Sentinel
             self.orchestrator.state.set_pipeline_status("PIPELINE_PAUSED", {
@@ -373,7 +373,7 @@ class ProductOwnerPhase:
                 "task_desc": "Generar especificación BACKLOG.json válida",
                 "output_file": "BACKLOG.json"
             })
-            self.orchestrator.metrics.append({"fase": "📝 Product Owner", "detalle": f"HARD CRASH ({last_error[:30]}...)", "tiempo": elapsed, "status": "❌"})
+            self.orchestrator.metrics.append({"fase": "[NOTA] Product Owner", "detalle": f"HARD CRASH ({last_error[:30]}...)", "tiempo": elapsed, "status": "[ERROR]"})
             return False
 
         # Garantizar e inyectar de forma determinista la US-000 (Sprint 0) si falta en el backlog
@@ -423,20 +423,20 @@ class ProductOwnerPhase:
             return False
 
         tokens = estimate_tokens(result)
-        console.print(f"✓ BACKLOG.json generado [dim]({tokens:,} tokens · {elapsed:.1f}s)[/dim]")
-        self.orchestrator.metrics.append({"fase": "📝 Product Owner", "detalle": f"~{tokens:,} tokens → BACKLOG.json", "tiempo": elapsed, "status": "✅"})
+        console.print(f"[OK] BACKLOG.json generado [dim]({tokens:,} tokens · {elapsed:.1f}s)[/dim]")
+        self.orchestrator.metrics.append({"fase": "[NOTA] Product Owner", "detalle": f"~{tokens:,} tokens → BACKLOG.json", "tiempo": elapsed, "status": "[COMPLETADO]"})
 
         # Bucle de interacción y feedback del usuario sobre el backlog (Interactividad y Transparencia)
         backlog_approved = False
         while not backlog_approved:
             # Mostrar resumen narrativo en consola
             from rich.markdown import Markdown
-            console.print("\n[bold green]📋 Resumen Narrativo del Backlog de Producto:[/bold green]")
+            console.print("\n[bold green][LISTA] Resumen Narrativo del Backlog de Producto:[/bold green]")
             console.print(Markdown(md_backlog))
             console.print("-" * 60)
             
             try:
-                feedback = input("\n✍ Escribe comentarios para ajustar el backlog, o responde 'y'/'aprobado' para confirmar > ").strip()
+                feedback = input("\n[INPUT] Escribe comentarios para ajustar el backlog, o responde 'y'/'aprobado' para confirmar > ").strip()
             except (KeyboardInterrupt, EOFError):
                 feedback = "y"
                 
@@ -448,7 +448,7 @@ class ProductOwnerPhase:
                 continue
                 
             # Integrar feedback del usuario y regenerar
-            console.print(f"[yellow]🔄 Integrando feedback del usuario en el backlog: '{feedback}'...[/yellow]")
+            console.print(f"[yellow][RECARGA] Integrando feedback del usuario en el backlog: '{feedback}'...[/yellow]")
             
             adjustment_system = (
                 f"{agent_prompt}\n\n"
@@ -468,7 +468,7 @@ class ProductOwnerPhase:
                 adjust_result = self.orchestrator._call_agent(adjustment_system, adjustment_user, json_mode=True, timeout=180.0, temperature=0.2)
                 
             if not adjust_result:
-                console.print("[red]❌ El Product Owner no pudo ajustar el backlog. Intentando mantener el backlog actual.[/red]")
+                console.print("[red][ERROR] El Product Owner no pudo ajustar el backlog. Intentando mantener el backlog actual.[/red]")
                 continue
                 
             parsed_backlog_adjusted = None
@@ -485,7 +485,7 @@ class ProductOwnerPhase:
                     adjust_error = str(e)
                     logger.warning("Fallo al parsear JSON ajustado intento %d/%d: %s", adjust_attempt, MAX_JSON_RETRIES, e)
                     if adjust_attempt < MAX_JSON_RETRIES:
-                        console.print(f"[yellow]⚠ Intento {adjust_attempt}/{MAX_JSON_RETRIES}: Error de sintaxis JSON en el ajuste. Reintentando...[/yellow]")
+                        console.print(f"[yellow][ADVERTENCIA] Intento {adjust_attempt}/{MAX_JSON_RETRIES}: Error de sintaxis JSON en el ajuste. Reintentando...[/yellow]")
                         correction_system = "Error de sintaxis JSON. Devuelve ÚNICAMENTE la estructura JSON válida con las historias de usuario."
                         correction_user = f"RESPUESTA ANTERIOR:\n```\n{current_adjust}\n```\n\nERROR:\n{adjust_error}\n\nCorrige y devuelve JSON puro."
                         try:
@@ -502,17 +502,17 @@ class ProductOwnerPhase:
                     self.orchestrator._write_project_file("BACKLOG.md", md_backlog)
                 except Exception as e_write:
                     logger.error("Error al escribir archivos de BACKLOG ajustado tras parsing exitoso: %s", e_write)
-                    console.print("[red]❌ Error al integrar el feedback en el JSON. Reintentando...[/red]")
+                    console.print("[red][ERROR] Error al integrar el feedback en el JSON. Reintentando...[/red]")
             else:
-                console.print(f"[red]❌ Error al integrar el feedback en el JSON tras {MAX_JSON_RETRIES} intentos: {adjust_error}. Manteniendo backlog previo.[/red]")
+                console.print(f"[red][ERROR] Error al integrar el feedback en el JSON tras {MAX_JSON_RETRIES} intentos: {adjust_error}. Manteniendo backlog previo.[/red]")
 
-        console.print("✓ Backlog aprobado.\n")
+        console.print("[OK] Backlog aprobado.\n")
         return True
 
     def run_dor_validation(self) -> bool:
         """Un QA Agent audita el BACKLOG.md para certificar que está listo (DoR) y registra el feedback en DAILY.md."""
         from datetime import datetime
-        console.print("\n━━━ FASE COMPLEMENTARIA: 🔍 QA Agent - Validación de DoR ━━━")
+        console.print("\n━━━ FASE COMPLEMENTARIA: [BUSQUEDA] QA Agent - Validación de DoR ━━━")
         t0 = time.perf_counter()
         
         backlog_md = self.orchestrator._read_project_file("BACKLOG.md")
@@ -540,7 +540,7 @@ class ProductOwnerPhase:
         elapsed = time.perf_counter() - t0
         
         if not response:
-            console.print("⚠ QA Agent no respondió. Asumiendo listo por defecto.")
+            console.print("[ADVERTENCIA] QA Agent no respondió. Asumiendo listo por defecto.")
             return True
 
         import json
@@ -575,7 +575,7 @@ class ProductOwnerPhase:
         # Registrar entrada transparente en DAILY.md
         daily_path = os.path.join(self.orchestrator.project_path, "DAILY.md")
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        status_icon = "✅ Aprobado" if ready else "❌ Rechazado (Requiere Refinamiento)"
+        status_icon = "[COMPLETADO] Aprobado" if ready else "[ERROR] Rechazado (Requiere Refinamiento)"
         
         daily_entry = (
             f"\n### [{timestamp}] @qa_engineer — Auditoría Definition of Ready (DoR)\n"
@@ -592,23 +592,23 @@ class ProductOwnerPhase:
         self.orchestrator._write_project_file("DAILY.md", existing_daily + daily_entry)
 
         if ready:
-            console.print(f"✓ DoR Aprobado: {reason}")
+            console.print(f"[OK] DoR Aprobado: {reason}")
             self.orchestrator.metrics.append({
-                "fase": "🔍 QA (DoR Validation)",
+                "fase": "[BUSQUEDA] QA (DoR Validation)",
                 "detalle": f"Aprobado: {reason[:40]}...",
                 "tiempo": elapsed,
-                "status": "✅"
+                "status": "[COMPLETADO]"
             })
             return True
         else:
-            console.print(f"❌ DoR Rechazado: {reason}")
+            console.print(f"[ERROR] DoR Rechazado: {reason}")
             if suggestions:
-                console.print(f"[yellow]💡 Sugerencias registradas en DAILY.md: {suggestions}[/yellow]")
+                console.print(f"[yellow][SUGERENCIA] Sugerencias registradas en DAILY.md: {suggestions}[/yellow]")
             self.orchestrator.metrics.append({
-                "fase": "🔍 QA (DoR Validation)",
+                "fase": "[BUSQUEDA] QA (DoR Validation)",
                 "detalle": f"RECHAZADO: {reason[:40]}...",
                 "tiempo": elapsed,
-                "status": "❌"
+                "status": "[ERROR]"
             })
             try:
                 override = Confirm.ask("¿Deseas ignorar la advertencia de QA y continuar con el sprint?", default=True)

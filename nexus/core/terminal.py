@@ -42,6 +42,12 @@ _DESTRUCTIVE_PATTERNS: list[re.Pattern] = [
     re.compile(r":\(\)\{.*\};:", re.IGNORECASE),
     re.compile(r"\b(find|fd)\b.*\s-delete\b", re.IGNORECASE),
     re.compile(r"\bshred\b.*\s(/|~|\$HOME)\b", re.IGNORECASE),
+    # Hardening Blue Team: Evasiones vía base64/openssl decode canalizados a shells
+    re.compile(r"(base64\s+(-d|--decode)|openssl\s+enc\s+-d).*\s*\|\s*(sh|bash|zsh|dash|ash|python|perl|ruby)", re.IGNORECASE),
+    # Hardening Blue Team: One-liners destructivos en Python/Perl/Node/Ruby
+    re.compile(r"\b(python\d*|perl|ruby|node)\s+-[ec].*(shutil\.rmtree|os\.remove|os\.unlink|fs\.rmSync|process\.exit)", re.IGNORECASE),
+    re.compile(r"\beval\s+[\"\']?(\$|\`|\bsh\b|\bbash\b)", re.IGNORECASE),
+    re.compile(r"\|\s*(sudo|su|doas)\b", re.IGNORECASE),
 ]
 
 # Fase 2 - Barrera de Red
@@ -50,6 +56,14 @@ _NETWORK_PATTERNS = [
 ]
 
 _SHELL_META_RE = re.compile(r"[|&;<>()$`*?\[\]{}~]")
+
+# Archivos y directorios confidenciales que NUNCA deben auto-aprobarse para lectura
+_SENSITIVE_TARGETS = (
+    "/etc", "/root", "/boot", "/sys", "/proc", "/dev",
+    ".ssh", "id_rsa", "id_ecdsa", "id_ed25519", ".env", ".bash_history",
+    ".zsh_history", ".git/config", "credentials", ".aws", ".kube",
+    "jellyfish_state.db"
+)
 
 # Sprint 8.0 — Prefijos de comandos de solo lectura que no necesitan confirmación
 # del usuario en el bucle Auto-ReAct. Solo aplica cuando el LLM sugiere
@@ -69,21 +83,27 @@ _READONLY_PREFIXES = (
 def is_readonly_command(command: str) -> bool:
     """Determina si un comando es de solo lectura (seguro para auto-aprobación).
 
-    Sprint 8.0 — Comandos de lectura pueden auto-ejecutarse en el Action Loop
-    sin requerir confirmación manual del usuario.
+    Sprint 8.0 & Hardening Blue Team:
+    Comandos de lectura pueden auto-ejecutarse en el Action Loop si no contienen
+    pipes, redirecciones, sustitución de comandos o intentos de leer archivos sensibles.
 
     Args:
         command: El comando a evaluar.
 
     Returns:
-        True si el comando es de solo lectura.
+        True si el comando es de solo lectura y seguro.
     """
     cmd_stripped = command.strip()
-    # No auto-aprobar comandos con pipe, redirect o encadenamiento
-    if any(c in cmd_stripped for c in ('|', '>', '>>', '&&', '||', ';')):
+    # No auto-aprobar comandos con pipe, redirect, sustitución o encadenamiento
+    if any(c in cmd_stripped for c in ('|', '>', '>>', '&&', '||', ';', '`', '$')):
         return False
+    # No auto-aprobar comandos que intenten inspeccionar archivos sensibles
+    low_cmd = cmd_stripped.lower()
+    for sensitive in _SENSITIVE_TARGETS:
+        if sensitive in low_cmd:
+            return False
     for prefix in _READONLY_PREFIXES:
-        if cmd_stripped.startswith(prefix):
+        if cmd_stripped.startswith(prefix + " ") or cmd_stripped == prefix:
             return True
     return False
 
@@ -206,7 +226,7 @@ def run_terminal_command(
             text=True
         )
         if syntax_check.returncode != 0:
-            error_msg = f"❌ Error de sintaxis (Dry Run AST): {syntax_check.stderr.strip()}"
+            error_msg = f"[ERROR] Error de sintaxis (Dry Run AST): {syntax_check.stderr.strip()}"
             console.print(f"{error_msg}\n")
             if return_code_dict is not None:
                 return_code_dict['returncode'] = -1
@@ -218,7 +238,7 @@ def run_terminal_command(
     dangerous, matched_pattern = _is_destructive(actual_command)
     if dangerous:
         msg = (
-            f"🛑 INCIDENTE DE SEGURIDAD: Comando destructivo detectado y bloqueado automáticamente.\n"
+            f"[ALERTA] INCIDENTE DE SEGURIDAD: Comando destructivo detectado y bloqueado automáticamente.\n"
             f"   Patrón de lista negra: {matched_pattern}\n"
             f"   Comando: {actual_command[:150]}"
         )
@@ -230,7 +250,7 @@ def run_terminal_command(
 
     # Prevenir prompts repetidos para comandos denegados o fallidos en este turno
     if actual_command in getattr(state, "denied_commands", set()):
-        msg = f"✗ Comando denegado automáticamente porque ya fue rechazado o falló previamente en este turno."
+        msg = f"[X] Comando denegado automáticamente porque ya fue rechazado o falló previamente en este turno."
         console.print(f"{msg}\n")
         if return_code_dict is not None:
             return_code_dict['returncode'] = -1
@@ -266,9 +286,9 @@ def run_terminal_command(
             else "[bold white][y][/bold white] Permitir una vez  ·  [bold white][n][/bold white] Denegar  ·  [bold white][a][/bold white] Permitir siempre para este proyecto"
         )
         title_text = (
-            "⚡ SOLICITUD ESTRICTA DE RED (BLOQUEADA)"
+            "[ACCION] SOLICITUD ESTRICTA DE RED (BLOQUEADA)"
             if is_network
-            else "⚡ SOLICITUD DE EJECUCIÓN DE COMANDO"
+            else "[ACCION] SOLICITUD DE EJECUCIÓN DE COMANDO"
         )
 
         syntax = Syntax(actual_command, "bash", theme="monokai", word_wrap=True)
@@ -283,32 +303,53 @@ def run_terminal_command(
         screen_console.print()
         screen_console.print(panel)
 
+        # Hardening Blue Team: Verificar si el entorno es interactivo antes de solicitar stdin
+        is_interactive = hasattr(sys.stdin, "isatty") and sys.stdin.isatty()
+        has_running_loop = False
+        try:
+            import asyncio
+            asyncio.get_running_loop()
+            has_running_loop = True
+        except RuntimeError:
+            has_running_loop = False
+
+        if not is_interactive or has_running_loop:
+            msg = (
+                f"[ADVERTENCIA] EJECUCIÓN DETENIDA: El comando '{actual_command[:80]}' requiere confirmación humana, "
+                f"pero el entorno actual es web/no-interactivo (Default Deny defensivo)."
+            )
+            logger.warning(msg)
+            screen_console.print(f"\n{msg}\n")
+            if return_code_dict is not None:
+                return_code_dict['returncode'] = -1
+            return msg
+
         try:
             import asyncio
             from prompt_toolkit.patch_stdout import patch_stdout
             session = PromptSession()
             async def get_decision():
                 with patch_stdout():
-                    return await session.prompt_async("\n❯ Decisión [y/n/a]: ", validator=YesNoAlwaysValidator())
+                    return await session.prompt_async("\n> Decisión [y/n/a]: ", validator=YesNoAlwaysValidator())
             decision = asyncio.run(asyncio.wait_for(get_decision(), timeout=60)).strip().lower()
         except TimeoutError:
             decision = 'n'
-            screen_console.print("\n✗ Tiempo de espera agotado (60s). Comando denegado por seguridad (Default Deny).")
+            screen_console.print("\n[X] Tiempo de espera agotado (60s). Comando denegado por seguridad (Default Deny).")
         except (KeyboardInterrupt, EOFError):
             decision = 'n'
-            screen_console.print("\n✗ Comando denegado por interrupción.")
+            screen_console.print("\n[X] Comando denegado por interrupción.")
 
         if decision == 'n':
             if not hasattr(state, "denied_commands"):
                 state.denied_commands = set()
             state.denied_commands.add(actual_command)
-            screen_console.print("✗ Ejecución denegada por el usuario.\n")
+            screen_console.print("[X] Ejecución denegada por el usuario.\n")
             if return_code_dict is not None:
                 return_code_dict['returncode'] = -1
             return "Ejecución denegada por el usuario."
         elif decision == 'a':
             state.enable_project_auto_approve()
-            screen_console.print("✓ Auto-aprobación activada para este proyecto en adelante.\n")
+            screen_console.print("[OK] Auto-aprobación activada para este proyecto en adelante.\n")
 
     try:
         # Sprint 8.4 — Ejecutar comandos en la carpeta del proyecto activo si está configurado
@@ -326,6 +367,8 @@ def run_terminal_command(
         # Fase 2: Inyección de Bubblewrap (bwrap)
         import shutil
         has_bwrap = shutil.which("bwrap") is not None
+        if not has_bwrap:
+            logger.warning("[SEGURIDAD] ALERTA BLUE TEAM: Bubblewrap (bwrap) no disponible. Ejecución sin sandbox de sistema de archivos ni aislamiento de red.")
         if has_bwrap and exec_cwd:
             if isinstance(popen_command, list):
                 popen_command = [
@@ -414,7 +457,7 @@ def run_terminal_command(
         if process.returncode == 127 and not auto_healed:
             alias_command = _apply_modern_aliases(actual_command)
             if alias_command != actual_command:
-                console.print(f"[yellow]⚠️ Comando no encontrado (127). Auto-healing: Ejecutando '{alias_command}'...[/yellow]\n")
+                console.print(f"[yellow][ADVERTENCIA] Comando no encontrado (127). Auto-healing: Ejecutando '{alias_command}'...[/yellow]\n")
                 logger.info("Comando falló con 127. Auto-healing: '%s' -> '%s'", actual_command, alias_command)
                 return run_terminal_command(
                     alias_command,
@@ -435,12 +478,12 @@ def run_terminal_command(
             pass
         else:
             if not res:
-                res = f"✓ Comando ejecutado sin salida (exit code: {process.returncode})"
+                res = f"[OK] Comando ejecutado sin salida (exit code: {process.returncode})"
                 console.print(f"[dim]{res}[/dim]")
             elif process.returncode != 0:
-                console.print(f"✗ Comando finalizó con código {process.returncode}")
+                console.print(f"[X] Comando finalizó con código {process.returncode}")
             else:
-                console.print("✓ Comando ejecutado exitosamente")
+                console.print("[OK] Comando ejecutado exitosamente")
 
         if not silent_history:
             # Historial recibe versión compacta head+tail de 3000 chars
@@ -468,7 +511,7 @@ def run_terminal_command(
             reader.join(timeout=2)
         except Exception:
             pass
-        msg = f"⏰ Timeout: el comando excedió los {actual_timeout} segundos."
+        msg = f"[TIMEOUT] Timeout: el comando excedió los {actual_timeout} segundos."
         screen_console.print(f"{msg}")
         logger.warning("Timeout ejecutando: %s", actual_command[:100])
         
@@ -484,7 +527,7 @@ def run_terminal_command(
         if not auto_healed:
             alias_command = _apply_modern_aliases(actual_command)
             if alias_command != actual_command:
-                console.print(f"[yellow]⚠️ Comando no encontrado (FileNotFoundError). Auto-healing: Ejecutando '{alias_command}'...[/yellow]\n")
+                console.print(f"[yellow][ADVERTENCIA] Comando no encontrado (FileNotFoundError). Auto-healing: Ejecutando '{alias_command}'...[/yellow]\n")
                 logger.info("Comando no encontrado (FileNotFoundError). Auto-healing: '%s' -> '%s'", actual_command, alias_command)
                 return run_terminal_command(
                     alias_command,
@@ -522,7 +565,7 @@ def get_global_keybindings(state) -> KeyBindings:
     def _agent_status_view(event):
         """Ctrl+A — Muestra estado detallado de los agentes en el panel de logs."""
         from core.tui import tui_engine
-        tui_engine.append_log("\n📋 [VISTA DE AGENTES] Estado detallado de los agentes:\n")
+        tui_engine.append_log("\n[LISTA] [VISTA DE AGENTES] Estado detallado de los agentes:\n")
         agent_statuses = getattr(state, "agent_statuses", {})
         for name, status in agent_statuses.items():
             tui_engine.append_log(f"  - @{name:<20}: {status}\n")
@@ -532,22 +575,22 @@ def get_global_keybindings(state) -> KeyBindings:
     def _force_rag_reload(event):
         """Ctrl+R — Fuerza recarga/reindexación del motor RAG."""
         from core.tui import tui_engine
-        tui_engine.append_log("\n🔄 [RAG] Forzando reindexación del motor RAG...\n")
+        tui_engine.append_log("\n[RECARGA] [RAG] Forzando reindexación del motor RAG...\n")
         if getattr(state, "rag", None):
             try:
                 state.rag.reindex()
-                tui_engine.append_log("✓ [RAG] Motor reindexado con éxito.\n")
+                tui_engine.append_log("[OK] [RAG] Motor reindexado con éxito.\n")
             except Exception as e:
-                tui_engine.append_log(f"❌ [RAG] Error al reindexar: {e}\n")
+                tui_engine.append_log(f"[ERROR] [RAG] Error al reindexar: {e}\n")
         else:
-            tui_engine.append_log("⚠️ [RAG] Motor RAG no activo en el estado.\n")
+            tui_engine.append_log("[ADVERTENCIA] [RAG] Motor RAG no activo en el estado.\n")
 
     @kb.add('c-l')
     def _clear_logs(event):
         """Ctrl+L — Limpia la pantalla de logs de la TUI."""
         from core.tui import tui_engine
         tui_engine.clear_scroll_region()
-        tui_engine.append_log("✓ Pantalla de logs limpia.\n")
+        tui_engine.append_log("[OK] Pantalla de logs limpia.\n")
 
     @kb.add('c-s')
     def _save_chat(event):
@@ -568,7 +611,7 @@ def get_global_keybindings(state) -> KeyBindings:
                     role = msg.get('role', 'unknown').upper()
                     content = msg.get('content', '')
                     f.write(f"### {role}\n\n{content}\n\n---\n\n")
-            tui_engine.append_log(f"✓ Chat guardado: {filepath}\n")
+            tui_engine.append_log(f"[OK] Chat guardado: {filepath}\n")
         except OSError as e:
             tui_engine.append_log(f"Error guardando chat: {e}\n")
 

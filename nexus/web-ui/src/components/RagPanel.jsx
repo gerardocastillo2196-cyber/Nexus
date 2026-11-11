@@ -151,7 +151,7 @@ export default function RagPanel({ onClose, onStateRefresh }) {
           <div className="modal-title-group">
             <h2>Administración de RAG (Retrieval-Augmented Generation)</h2>
           </div>
-          <button className="close-btn" onClick={onClose}>✕</button>
+          <button className="close-btn" onClick={onClose}>X</button>
         </div>
 
         {/* Body */}

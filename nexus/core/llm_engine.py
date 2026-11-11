@@ -162,7 +162,7 @@ def ensure_ollama_running(ollama_url: str = "http://localhost:11434") -> bool:
         
     # Si no responde, intentar levantarlo
     logger.info("Ollama no responde. Intentando iniciar servicio 'ollama serve'...")
-    console.print(f"⚠ Ollama no responde en {base_url}. Intentando iniciar 'ollama serve' en segundo plano...")
+    console.print(f"[ADVERTENCIA] Ollama no responde en {base_url}. Intentando iniciar 'ollama serve' en segundo plano...")
     
     try:
         # Ejecutar ollama serve en segundo plano
@@ -181,21 +181,21 @@ def ensure_ollama_running(ollama_url: str = "http://localhost:11434") -> bool:
                 with httpx.Client(timeout=1.5) as client:
                     resp = client.get(api_url)
                     if resp.status_code == 200:
-                        console.print("✓ Ollama iniciado correctamente en segundo plano.")
+                        console.print("[OK] Ollama iniciado correctamente en segundo plano.")
                         logger.info("Ollama iniciado exitosamente en el intento %d", i+1)
                         return True
             except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
                 pass
     except FileNotFoundError:
-        console.print("⚠ Alerta: El comando 'ollama' no está instalado en el sistema.")
+        console.print("[ADVERTENCIA] Alerta: El comando 'ollama' no está instalado en el sistema.")
         logger.warning("El ejecutable 'ollama' no fue encontrado.")
         return False
     except Exception as e:
-        console.print(f"⚠ Alerta: No se pudo iniciar Ollama automáticamente: {e}")
+        console.print(f"[ADVERTENCIA] Alerta: No se pudo iniciar Ollama automáticamente: {e}")
         logger.error("Error al levantar Ollama: %s", e)
         return False
         
-    console.print("⚠ Advertencia: Se ejecutó 'ollama serve' pero no responde. Es posible que debas iniciarlo manualmente.")
+    console.print("[ADVERTENCIA] Advertencia: Se ejecutó 'ollama serve' pero no responde. Es posible que debas iniciarlo manualmente.")
     logger.warning("Ollama se ejecutó pero no responde en %s", base_url)
     return False
 
@@ -699,7 +699,7 @@ def _call_llm_silent(
 
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError) as e:
             if provider_name == "ollama" and isinstance(e, httpx.TimeoutException):
-                console.print("\n[red]⚠ El modelo local superó el tiempo de espera (Timeout). Memoria saturada.[/red]\n")
+                console.print("\n[red][ADVERTENCIA] El modelo local superó el tiempo de espera (Timeout). Memoria saturada.[/red]\n")
                 logger.error("Timeout del modelo local (GPU saturada) en _call_llm_silent: %s", e)
                 raise LocalLLMTimeoutError("El modelo local superó el tiempo de espera (Timeout). Memoria saturada.") from e
 
@@ -1027,7 +1027,7 @@ def _stream_request(
                         status = console.status(f"[cyan]Pensando ({provider_name})...[/cyan]")
                         status.start()
                     else:
-                        tui_engine.append_log(f"⏳ Pensando ({provider_name})...\n")
+                        tui_engine.append_log(f"[EN PROCESO] Pensando ({provider_name})...\n")
                     try:
                         async with client.stream("POST", url, headers=headers, json=payload) as response:
                             if status:
@@ -1043,7 +1043,7 @@ def _stream_request(
                                 try:
                                     async for line in response.aiter_lines():
                                         if _aborted and _aborted[0]:
-                                            tui_engine.append_log("\n⚡ Stream interrumpido — respuesta parcial conservada.\n")
+                                            tui_engine.append_log("\n[ACCION] Stream interrumpido — respuesta parcial conservada.\n")
                                             break
                                         if not line:
                                             continue
@@ -1052,7 +1052,7 @@ def _stream_request(
                                             full += chunk
                                             tui_engine.append_log(chunk)
                                 except KeyboardInterrupt:
-                                    tui_engine.append_log("\n⚡ Stream interrumpido — respuesta parcial conservada.\n")
+                                    tui_engine.append_log("\n[ACCION] Stream interrumpido — respuesta parcial conservada.\n")
                                     if _aborted is not None:
                                         _aborted[0] = True
                             else:
@@ -1064,7 +1064,7 @@ def _stream_request(
                                     try:
                                         async for line in response.aiter_lines():
                                             if _aborted and _aborted[0]:
-                                                print("\n⚡ Stream interrumpido — respuesta parcial conservada.")
+                                                print("\n[ACCION] Stream interrumpido — respuesta parcial conservada.")
                                                 break
                                             if not line:
                                                 continue
@@ -1073,7 +1073,7 @@ def _stream_request(
                                                 full += chunk
                                                 live.update(Markdown(full))
                                     except KeyboardInterrupt:
-                                        print("\n⚡ Stream interrumpido — respuesta parcial conservada.")
+                                        print("\n[ACCION] Stream interrumpido — respuesta parcial conservada.")
                                         if _aborted is not None:
                                             _aborted[0] = True
                     finally:
@@ -1103,7 +1103,7 @@ def _stream_request(
 
         except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException, httpx.RequestError) as e:
             if provider_name == "ollama" and isinstance(e, httpx.TimeoutException):
-                msg = "\n⚠ El modelo local superó el tiempo de espera (Timeout). Memoria saturada.\n"
+                msg = "\n[ADVERTENCIA] El modelo local superó el tiempo de espera (Timeout). Memoria saturada.\n"
                 if getattr(tui_engine, "_initialized", False):
                     tui_engine.append_log(msg)
                 else:
@@ -1121,35 +1121,35 @@ def _stream_request(
                     console.print(msg)
 
             if provider_name == "ollama" and code == 404:
-                error_alert = f"❌ El modelo '{model_name}' no está instalado en Ollama.\n\nPor favor, abre otra terminal y ejecuta:\n    ollama pull {model_name}\n\nLuego vuelve a intentarlo."
+                error_alert = f"[ERROR] El modelo '{model_name}' no está instalado en Ollama.\n\nPor favor, abre otra terminal y ejecuta:\n    ollama pull {model_name}\n\nLuego vuelve a intentarlo."
                 log_msg(f"\n{error_alert}\n")
                 logger.error("Ollama model not found: %s", model_name)
                 return error_alert
 
             if code in (429, 503):
-                log_msg(f"⚠ El modelo {model_name} está saturado (Error {code}). Buscando alternativas...")
+                log_msg(f"[ADVERTENCIA] El modelo {model_name} está saturado (Error {code}). Buscando alternativas...")
             else:
                 extra_details = f" - Details: {error_msg}" if error_msg else ""
-                log_msg(f"⚠ Error al invocar {model_name} (Status: {code}, Error: {e}{extra_details}). Buscando alternativas...")
+                log_msg(f"[ADVERTENCIA] Error al invocar {model_name} (Status: {code}, Error: {e}{extra_details}). Buscando alternativas...")
             
             logger.warning("Fallo en _stream_request: %s (status_code=%s) con modelo %s. Iniciando fallback... Detalles: %s", e, code, model_name, error_msg)
 
             if fallback_attempt >= max_fallbacks:
                 if provider_name != "ollama":
-                    log_msg(f"⚠ Límite de fallbacks cloud excedido. Ejecutando Plan C (Fallback a Local)...")
+                    log_msg(f"[ADVERTENCIA] Límite de fallbacks cloud excedido. Ejecutando Plan C (Fallback a Local)...")
                     try:
                         new_prov, new_model = _fallback_to_local_ollama(state)
-                        log_msg(f"✓ Cambiando a proveedor local: {new_prov} (Modelo: {new_model})")
+                        log_msg(f"[OK] Cambiando a proveedor local: {new_prov} (Modelo: {new_model})")
                         current_provider = new_prov
                         current_model = new_model
                         max_fallbacks += 1
                         fallback_attempt += 1
                         continue
                     except Exception as local_err:
-                        log_msg(f"❌ Falló el fallback local a Ollama: {local_err}")
+                        log_msg(f"[ERROR] Falló el fallback local a Ollama: {local_err}")
                         return None
                 else:
-                    log_msg(f"❌ Se excedió el límite de fallbacks ({max_fallbacks}).")
+                    log_msg(f"[ERROR] Se excedió el límite de fallbacks ({max_fallbacks}).")
                     return None
 
             # Intentar fallback dinámico
@@ -1159,7 +1159,7 @@ def _stream_request(
                 
                 if new_model:
                     state.save_config(model=new_model)
-                    log_msg(f"✓ Cambiando a modelo de respaldo dinámico: {new_model}")
+                    log_msg(f"[OK] Cambiando a modelo de respaldo dinámico: {new_model}")
                     current_model = new_model
                     fallback_attempt += 1
                     continue
@@ -1169,20 +1169,20 @@ def _stream_request(
                 logger.warning("Fallo al obtener modelos dinámicos de %s: %s.", provider_name, fe)
                 
                 if provider_name == "ollama":
-                    log_msg(f"❌ No hay modelos locales viables restantes en Ollama. Abortando.")
+                    log_msg(f"[ERROR] No hay modelos locales viables restantes en Ollama. Abortando.")
                     return None
                     
-                log_msg(f"⚠ Proveedor {provider_name} no disponible o sin modelos. Ejecutando Plan C (Fallback a Local)...")
+                log_msg(f"[ADVERTENCIA] Proveedor {provider_name} no disponible o sin modelos. Ejecutando Plan C (Fallback a Local)...")
                 
                 try:
                     new_prov, new_model = _fallback_to_local_ollama(state)
-                    log_msg(f"✓ Cambiando a proveedor local: {new_prov} (Modelo: {new_model})")
+                    log_msg(f"[OK] Cambiando a proveedor local: {new_prov} (Modelo: {new_model})")
                     current_provider = new_prov
                     current_model = new_model
                     fallback_attempt += 1
                     continue
                 except Exception as local_err:
-                    log_msg(f"❌ Falló el fallback local a Ollama: {local_err}")
+                    log_msg(f"[ERROR] Falló el fallback local a Ollama: {local_err}")
                     return None
 
 
@@ -1252,7 +1252,7 @@ def stream_ollama(state, rag_context: str = "") -> str | None:
 
         if not full:
             if react_iteration == 1:
-                console.print("⚠ El modelo no generó respuesta.")
+                console.print("[ADVERTENCIA] El modelo no generó respuesta.")
             return final_response
 
         final_response = full
@@ -1274,7 +1274,7 @@ def stream_ollama(state, rag_context: str = "") -> str | None:
             if is_readonly_command(cmd_clean):
                 cmd_display = cmd_clean[:200] + "..." if len(cmd_clean) > 200 else cmd_clean
                 console.print(
-                    f"\n⚡ Auto-ejecutando comando de lectura:\n"
+                    f"\n[ACCION] Auto-ejecutando comando de lectura:\n"
                     f"{cmd_display}"
                 )
                 output = run_terminal_command(cmd_clean, state, force_confirm=False)
@@ -1297,7 +1297,7 @@ def stream_ollama(state, rag_context: str = "") -> str | None:
         if not executed_any:
             break
 
-        console.print(f"[dim]🔄 Auto-ReAct: iteración {react_iteration}/{MAX_REACT_LOOPS}...[/dim]")
+        console.print(f"[dim][RECARGA] Auto-ReAct: iteración {react_iteration}/{MAX_REACT_LOOPS}...[/dim]")
 
     # --- Citador Heurístico (Sprint 1 Quick Win) ---
     if final_response and rag_context:
@@ -1314,7 +1314,7 @@ def stream_ollama(state, rag_context: str = "") -> str | None:
                 actual_citations.add(source)
 
         if actual_citations:
-            citation_block = "\n\n---\n**📚 Fuentes Citadas:**\n"
+            citation_block = "\n\n---\n**[FUENTES] Fuentes Citadas:**\n"
             for src in sorted(actual_citations):
                 abs_path = os.path.abspath(src)
                 citation_block += f"- [{src}](file://{abs_path})\n"
